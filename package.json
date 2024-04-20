@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "Easy to use static cli server with routing",
 	"author": "Robert Liapota <urobbyu@gmail.com>",
-	"repository": "UROBBYU/serve",
+	"repository": "UROBBYU/ServerCMD",
 	"license": "MIT",
 	"main": "index.js",
 	"dependencies": {
