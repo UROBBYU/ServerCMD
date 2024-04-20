@@ -5,7 +5,11 @@
 	"author": "Robert Liapota <urobbyu@gmail.com>",
 	"repository": "UROBBYU/ServerCMD",
 	"license": "MIT",
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	},
 	"main": "index.js",
+	"bin": "./index.js",
 	"dependencies": {
 		"express": "^4.18.2",
 		"open": "^8.4.0",

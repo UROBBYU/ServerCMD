@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import net = require('node:net')
 import express = require('express')
 import open = require('open')
