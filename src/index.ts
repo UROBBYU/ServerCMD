@@ -125,7 +125,10 @@ const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
 const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath)
 	: `Server file ${resolve(__dirname + 'assets/404.html')} is missing`
 const ROUTES_FILE = routesPath ? fs.readFileSync(routesPath).toString() : ''
-const ROUTES_TEMPLATE = fs.readFileSync(resolve(__dirname + '/assets/routes')) ?? '# Server file routes is missing'
+const ROUTES_TEMPLATE_PATH = resolve(__dirname + '/assets/routes')
+const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
+	? fs.readFileSync(ROUTES_TEMPLATE_PATH)
+	: '# Server file routes is missing'
 
 if (argv.i) {
 	fs.writeFileSync('./.500.html', ERROR_PAGE)
@@ -175,7 +178,6 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 		: p => p.startsWith(g.req + (g.f ?? '')) ? p.replace(g.req, g.res) : undefined
 	} as Route
 }).filter(v => v) as Route[]
-const FAVICON_PATH = resolve(__dirname + '/favicon.ico')
 const LOG1024 = Math.log(1024)
 const LSYMS = '⠏⠛⠹⠼⠶⠧'
 const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
@@ -248,8 +250,10 @@ const ex = express()
 .use(async (req, res, next) => {
 	try {
 		const path = req.path
-		if (path === '/favicon.ico')
-			return fs.createReadStream(FAVICON_PATH).pipe(res)
+		if (path === '/favicon.ico') {
+			const faviconPath = resolve(__dirname + '/assets/favicon.ico')
+			if (fs.existsSync(faviconPath)) return fs.createReadStream(faviconPath).pipe(res)
+		}
 
 		const fpath = resolve(`.${decodeURI(path)}`)
 		if (path.endsWith('/') && !path.includes('/.') && fs.existsSync(fpath)) {
