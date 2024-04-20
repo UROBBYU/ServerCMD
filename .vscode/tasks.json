@@ -1,0 +1,44 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "compile ts",
+			"type": "typescript",
+			"tsconfig": "tsconfig.json",
+			"problemMatcher": "$tsc",
+			"hide": true,
+			"presentation": {
+				"showReuseMessage": false,
+				"echo": false,
+				"clear": true
+			}
+		},
+		{
+			"options": {
+				"statusbar": {
+					"label": "Build",
+					"tooltip": "Build src and resolve paths",
+					"color": "#5b9945"
+				}
+			},
+			"label": "build",
+			"icon": {
+				"id": "file-code"
+			},
+			"dependsOn": "compile ts",
+			"dependsOrder": "sequence",
+			"type": "shell",
+			"command": "Write-Host",
+			"args": [
+				"-ForegroundColor",
+				"Green",
+				"TypeScript compiled successfully."
+			],
+			"presentation": {
+				"showReuseMessage": false,
+				"echo": false,
+				"clear": true
+			}
+		}
+	]
+}
