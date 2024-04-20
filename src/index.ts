@@ -62,48 +62,21 @@ const argv = yargs(process.argv.splice(2))
 		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
 		type: 'string',
 		default: null,
-		defaultDescription: '.500.html',
-		coerce(path: string) {
-			if (path === null) {
-				path = './.500.html'
-
-				if (!fs.existsSync(path))
-					path = __dirname + '/assets/500.html'
-			}
-
-			return fs.readFileSync(resolve(path))
-		}
+		defaultDescription: '.500.html'
 	},
 	n: {
 		alias: 'not-found-page',
 		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
 		type: 'string',
 		default: null,
-		defaultDescription: '.404.html',
-		coerce(path: string) {
-			if (path === null) {
-				path = './.404.html'
-
-				if (!fs.existsSync(path))
-					path = __dirname + '/assets/404.html'
-			}
-
-			return fs.readFileSync(resolve(path))
-		}
+		defaultDescription: '.404.html'
 	},
 	r: {
 		alias: 'routes',
 		desc: 'Path to routes map. Priority: arg > ./.routes',
 		type: 'string',
 		default: null,
-		defaultDescription: '.routes',
-		coerce(path: string) {
-			if (path === null) path = './.routes'
-			path = resolve(path)
-			if (!fs.existsSync(path)) return ''
-
-			return fs.readFileSync(path).toString()
-		}
+		defaultDescription: '.routes'
 	}
 })
 .parseSync()
@@ -113,10 +86,45 @@ interface Route {
 	try(path: string): string | undefined
 }
 
+process.stdout.write(`Root: ${resolve('./')}\nError page: `)
+
+let errorPath = argv.e ?? './.500.html'
+if (!fs.existsSync(errorPath)) {
+	errorPath = resolve(__dirname + '/assets/500.html')
+
+	if (!fs.existsSync(errorPath)) {
+		errorPath = ''
+		console.log('missing!')
+	} else console.log('built-in')
+} else console.log(errorPath)
+
+process.stdout.write('Not Found page: ')
+
+let nfPath = argv.e ?? './.404.html'
+if (!fs.existsSync(nfPath)) {
+	nfPath = resolve(__dirname + '/assets/404.html')
+
+	if (!fs.existsSync(nfPath)) {
+		nfPath = ''
+		console.log('missing!')
+	} else console.log('built-in')
+} else console.log(errorPath)
+
+process.stdout.write('Routes list: ')
+
+let routesPath = argv.r ?? './.routes'
+if (!fs.existsSync(routesPath)) {
+	routesPath = ''
+	console.log('not found')
+} else console.log('found')
+
 const OPEN_IN_BROWSER = argv.o
 const EXTENSION_FALLBACKS = argv.x
-const ERROR_PAGE = argv.e ?? 'Server file 500.html is missing'
-const NOT_FOUND_PAGE = argv.n ?? 'Server file 404.html is missing'
+const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
+	: `Server file ${resolve(__dirname + 'assets/500.html')} is missing`
+const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath)
+	: `Server file ${resolve(__dirname + 'assets/404.html')} is missing`
+const ROUTES_FILE = routesPath ? fs.readFileSync(routesPath).toString() : ''
 const ROUTES_TEMPLATE = fs.readFileSync(resolve(__dirname + '/assets/routes')) ?? '# Server file routes is missing'
 
 if (argv.i) {
@@ -147,7 +155,7 @@ const route = (path: string): [redirect: boolean, path: string] => {
 	return [false, path]
 }
 
-const ROUTES = argv.r!.split('\n').map((line, i) => {
+const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 	line = line.split('#')[0]
 	line = line.trim()
 	if (!line) return null
@@ -327,7 +335,7 @@ isPortFree(PORT).then(isFree => {
 
 	const server = ex.listen(PORT, () => {
 		const port = (server.address() as net.SocketAddress).port
-		console.log(`Root: ${resolve('./')}\\\nhttp://localhost:${port} is listening...`)
+		console.log(`http://localhost:${port} is listening...`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 	})
 })
