@@ -38,7 +38,8 @@
 				"showReuseMessage": false,
 				"echo": false,
 				"clear": true
-			}
+			},
+			"problemMatcher": []
 		}
 	]
 }

@@ -8,6 +8,10 @@ import fsp = require('node:fs/promises')
 const { resolve, join } = require('node:path')
 import yargs = require('yargs/yargs')
 
+//? #################################
+//? ############# YARGS #############
+//? #################################
+
 const argv = yargs(process.argv.splice(2))
 
 .scriptName('serve')
@@ -81,10 +85,18 @@ const argv = yargs(process.argv.splice(2))
 })
 .parseSync()
 
+//? #################################
+//? ############# TYPES #############
+//? #################################
+
 interface Route {
 	redirect: boolean
 	try(path: string): string | undefined
 }
+
+//? #################################
+//? ######## PROCESSING ARGS ########
+//? #################################
 
 process.stdout.write(`Root: ${resolve('./')}\nError page: `)
 
@@ -94,7 +106,7 @@ if (!fs.existsSync(errorPath)) {
 
 	if (!fs.existsSync(errorPath)) {
 		errorPath = ''
-		console.log('missing!')
+		console.log('asset is missing!')
 	} else console.log('built-in')
 } else console.log(errorPath)
 
@@ -106,7 +118,7 @@ if (!fs.existsSync(nfPath)) {
 
 	if (!fs.existsSync(nfPath)) {
 		nfPath = ''
-		console.log('missing!')
+		console.log('asset is missing!')
 	} else console.log('built-in')
 } else console.log(errorPath)
 
@@ -121,14 +133,16 @@ if (!fs.existsSync(routesPath)) {
 const OPEN_IN_BROWSER = argv.o
 const EXTENSION_FALLBACKS = argv.x
 const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
-	: `Server file ${resolve(__dirname + 'assets/500.html')} is missing`
+	: `<h1>500 | Internal Server Error</h1>
+Script asset "${resolve(__dirname + '/assets/500.html')}" is missing`
 const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath)
-	: `Server file ${resolve(__dirname + 'assets/404.html')} is missing`
+	: `<h1>404 | File Not Found</h1>
+Script asset "${resolve(__dirname + '/assets/404.html')}" is missing`
 const ROUTES_FILE = routesPath ? fs.readFileSync(routesPath).toString() : ''
 const ROUTES_TEMPLATE_PATH = resolve(__dirname + '/assets/routes')
 const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
 	? fs.readFileSync(ROUTES_TEMPLATE_PATH)
-	: '# Server file routes is missing'
+	: `# Script asset "${resolve(__dirname + '/assets/routes')}" is missing`
 
 if (argv.i) {
 	fs.writeFileSync('./.500.html', ERROR_PAGE)
@@ -138,21 +152,14 @@ if (argv.i) {
 	process.exit()
 }
 
-const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
-	const client = net.createConnection({port}, () => {
-		client.destroy()
-		res(false)
-	}).once('error', (err: NodeJS.ErrnoException) => {
-		client.destroy()
-		if (err.code === 'ECONNREFUSED') res(true)
-		else rej(err)
-	})
-})
+//? #################################
+//? ############# ROUTES ############
+//? #################################
 
 const route = (path: string): [redirect: boolean, path: string] => {
 	for (const r of ROUTES) {
 		const p = r.try(path)
-		if (typeof p === 'string') return [r.redirect, p]
+		if (typeof p === 'string') return [r.redirect, p.replace(/\/+$/, '/')]
 	}
 
 	return [false, path]
@@ -178,6 +185,22 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 		: p => p.startsWith(g.req + (g.f ?? '')) ? p.replace(g.req, g.res) : undefined
 	} as Route
 }).filter(v => v) as Route[]
+
+//? #################################
+//? ############ UTILITY ############
+//? #################################
+
+const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
+	const client = net.createConnection({port}, () => {
+		client.destroy()
+		res(false)
+	}).once('error', (err: NodeJS.ErrnoException) => {
+		client.destroy()
+		if (err.code === 'ECONNREFUSED') res(true)
+		else rej(err)
+	})
+})
+
 const LOG1024 = Math.log(1024)
 const LSYMS = '⠏⠛⠹⠼⠶⠧'
 const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
@@ -195,6 +218,10 @@ const updateStatus = (status: string, [dx, dy]: [number, number]) => {
 	process.stdout.write(`${status}\x1b[${dy}E`)
 }
 
+//? #################################
+//? ############# LOGGER ############
+//? #################################
+
 let lSymbol = 0
 setInterval(() => {
 	pendingRequests.forEach((d, r) => {
@@ -210,13 +237,17 @@ setInterval(() => {
 
 process.stdout.write('\x1b[?25l')
 
+//? #################################
+//? ############# SERVER ############
+//? #################################
+
 const exStatic = express.static('./', {
 	extensions: EXTENSION_FALLBACKS
 })
 
 const ex = express()
 
-.use((req, res, next) => {
+.use((req, res, next) => { //? Logger
 	const line = `[${new Date().toISOString()}] ${req.method} ${decodeURI(req.originalUrl)} `
 	console.log(line)
 
@@ -233,84 +264,89 @@ const ex = express()
 	next()
 })
 
-.use('/', (req, res, next) => {
-	const [redir, path] = route(encodeURI(req.path))
+.use('/', (req, res, next) => { //? General handler
+	let path = decodeURI(req.path)
+	if (req.path.startsWith('//')) {
+		res.locals.fs = true
+		path = path.slice(1)
+		return next()
+	}
 
-	if (redir) return res.redirect(path)
+	let [redir, newPath] = route(encodeURI(path))
+	req.url = newPath + req.originalUrl.split('?').splice(1).join('?')
 
-	if (path.includes('/.')) return next()
+	if (redir) return res.redirect(req.url)
 
-	req.url = path + new URL(req.originalUrl, `http://${req.headers.host}`).search
-
-	if (path.endsWith('//')) return next()
+	if (newPath.includes('/.')) return next()
 
 	exStatic(req, res, next)
 })
 
-.use(async (req, res, next) => {
-	try {
-		const path = req.path
-		if (path === '/favicon.ico') {
-			const faviconPath = resolve(__dirname + '/assets/favicon.ico')
-			if (fs.existsSync(faviconPath)) return fs.createReadStream(faviconPath).pipe(res)
-		}
+.use(async (req, res, next) => { //? File handler
+	const path = decodeURI(req.path)
+	if (path === '/favicon.ico') {
+		const faviconPath = resolve(__dirname + '/assets/favicon.ico')
+		if (fs.existsSync(faviconPath)) return fs.createReadStream(faviconPath).pipe(res)
+	}
 
-		const fpath = resolve(`.${decodeURI(path)}`)
-		if (path.endsWith('/') && !path.includes('/.') && fs.existsSync(fpath)) {
-			const plist = (await fsp.readdir(fpath)).filter(p => !p.startsWith('.'))
+	const fpath = resolve(`.${decodeURI(path)}`)
+	if (path.endsWith('/') && !path.includes('/.') && fs.existsSync(fpath)) {
+		const plist = (await fsp.readdir(fpath)).filter(p => !p.startsWith('.'))
 
-			const flist = (await Promise.all(plist.map(f => fsp.stat(join(fpath, f)))))
-				.map((f, i) => ({
-					name: plist[i] + (f.isDirectory() ? '/' : ''),
-					size: f.size,
-					ctime: f.birthtime,
-					mtime: f.mtime,
-					toString() { return this.name }
-				}))
+		const flist = (await Promise.all(plist.map(f => fsp.stat(join(fpath, f)))))
+			.map((f, i) => ({
+				name: plist[i] + (f.isDirectory() ? '/' : ''),
+				size: f.size,
+				ctime: f.birthtime,
+				mtime: f.mtime,
+				toString() { return this.name }
+			}))
 
-			return res.format({
-				html() {
-					const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
-					const list = flist.map(f => {
-						const dsu = getDataSizeUnit(f.size)
-						const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
-
-						return `<tr><td><a href="./${f}">${f}</a></td>` +
-						`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
-						(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
-						'</tr>'
-					}).join('')
-
-					res.send(`<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
-				},
-
-				json() {
-					res.json(flist)
-				},
-
-				text() {
-					res.send(flist.join())
-				}
-			})
-		}
-
-		res.status(404).format({
+		return res.format({
 			html() {
-				res.send(NOT_FOUND_PAGE)
+				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
+				const list = flist.map(f => {
+					const dsu = getDataSizeUnit(f.size)
+					const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
+
+					return `<tr><td><a href="./${f}">${f}</a></td>` +
+					`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
+					(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
+					'</tr>'
+				}).join('')
+
+				res.send(`<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
 			},
 
 			json() {
-				res.json({ error: 'Not Found' })
+				res.json(flist)
 			},
 
 			text() {
-				res.send('Not Found')
+				res.send(flist.join())
 			}
 		})
-	} catch (err) { next(err) }
+	}
+
+	return next()
 })
 
-.use(((err, req, res, next) => {
+.use((_, res) => res.status(404).format({ //? "Not Found" handler
+		html() {
+			res.send(NOT_FOUND_PAGE)
+		},
+
+		json() {
+			res.json({ error: 'Not Found' })
+		},
+
+		text() {
+			res.send('Not Found')
+		}
+	})
+)
+
+.use(((err, req, res, _) => { //? Error handler
 	const errMsg = `We got some error here [${req.method} ${decodeURI(req.originalUrl)}]:\n${err.stack}`
 	console.error(errMsg)
 	movePendingRequests(errMsg.split('\n').length)

@@ -3,7 +3,7 @@
 # /some/path : /other/path # Routes all request that start with /some/path to /other/path
 # /other = /some # "=" means same as ":"
 # /another > /other # Redirects all requests that start with /another to /other
-# Add & in the beginning and / at the end of the line to enable RegExp matching.
-# &/c([au])t/ : /m$1d # Routes all request from /cat and /cut to /mad and /mud respectively
-# You can also add second & to make match case sensitive.
+# Add "&" in the beginning and "/" at the end of the line to enable RegExp matching.
+# &/c([au])t/ : /m$1d # Routes all requests from /cat and /cut to /mad and /mud respectively
+# You can also add second "&" to make match case sensitive.
 # && /Rat/ : /mouse # Will not match /rat
