@@ -248,19 +248,13 @@ const exStatic = express.static('./', {
 const ex = express()
 
 .use((req, res, next) => { //? Logger
-	let line = `[${new Date().toISOString()}]\n`
+	const h = req.socket.remoteAddress ?? '-'
+	const r = `${req.method} ${req.path} ${req.protocol.toUpperCase()}/${req.httpVersion}`
+	const b = res.get('Content-Length') ?? '-'
+	const ref = req.get('Referer') ?? '-'
+	const ua = req.get('User-Agent') ?? '-'
 
-	if (req) {
-		const h = req.socket.remoteAddress ?? '-'
-		const u = req?.accepted ?? '-'
-		const r = `${req.method} ${req.path} ${req.protocol.toUpperCase()}/${req.httpVersion}`
-		const s = res?.statusCode ?? '-'
-		const b = res?.get('Content-Length') ?? '-'
-		const ref = req.get('Referer') ?? '-'
-		const ua = req.get('User-Agent') ?? '-'
-
-		line += `${h} - ${u} "${r}" ${s} ${b} "${ref}" "${ua}"`
-	}
+	const line = `[${new Date().toISOString()}] ${h} - - "${r}" ${b} "${ref}" "${ua}"`
 
 	console.log(line)
 
