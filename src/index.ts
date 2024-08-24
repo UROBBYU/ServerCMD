@@ -202,7 +202,7 @@ const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 })
 
 const LOG1024 = Math.log(1024)
-const LSYMS = '⠏⠛⠹⠼⠶⠧'
+const LSYMS = ['_/‾', '/‾\\', '‾\\_', '\\_/']
 const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
 	'body{font-family:monospace;font-size:1.5em;color:#fff;background-color:#222231;white-space-collapse:preserve}' +
 	'a{font-weight:bold;color:#54cbc0}a:not(:hover){text-decoration:none}' +
@@ -210,10 +210,23 @@ const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
 const LIST_HEADER = '<tr><th>Name</th><th>Date modified</th><th>Size</th></tr>'
 
 const pendingRequests: Map<express.Request, [number, number]> = new Map()
+const latestLogs: number[] = []
 
 const getDataSizeUnit = (n: number) => n ? Math.trunc(Math.log(Math.abs(n)) / LOG1024) : 0
 const movePendingRequests = (n: number) => pendingRequests.forEach((v, k) => pendingRequests.set(k, [v[0], v[1] + n]))
-const updateStatus = (status: string, [dx, dy]: [number, number]) => {
+const updateStatus = (status: string, [col, row]: [number, number]) => {
+	let dy = 0
+	const latLogLen = latestLogs.length
+	const termWidth = process.stdout.columns
+	const indexLine = latLogLen - row
+	for (let i = latLogLen - 1; i >= indexLine; i--) {
+		dy += Math.ceil(latestLogs[i] / termWidth)
+	}
+
+	dy -= Math.floor(col / termWidth)
+
+	const dx = col % termWidth
+
 	process.stdout.moveCursor(dx, -dy)
 	process.stdout.write(`${status}\x1b[${dy}E`)
 }
@@ -233,7 +246,7 @@ setInterval(() => {
 	process.stdout.write(`\x1b[K${pendingRequests.size} request${pendingRequests.size === 1 ? '' : 's'} pending\r`)
 
 	lSymbol = (lSymbol + 1) % LSYMS.length
-}, 5e2)
+}, 4e2)
 
 process.stdout.write('\x1b[?25l')
 
@@ -248,17 +261,29 @@ const exStatic = express.static('./', {
 const ex = express()
 
 .use((req, res, next) => { //? Logger
-	const line = `[${new Date().toISOString()}] ${req.method} ${decodeURI(req.originalUrl)} `
+	const h = req.socket.remoteAddress ?? '-'
+	const r = `${req.method} ${req.path} ${req.protocol.toUpperCase()}/${req.httpVersion}`
+	const b = res.get('Content-Length') ?? '-'
+	const ref = req.get('Referer') ?? '-'
+	const ua = req.get('User-Agent') ?? '-'
+
+	const line = `[${new Date().toISOString()}] ${h} - - "${r}" ${b} "${ref}" "${ua}" ---`
+
+	latestLogs.push(line.length)
+
 	console.log(line)
 
 	movePendingRequests(1)
-	pendingRequests.set(req, [line.length, 1])
+	pendingRequests.set(req, [line.length - 3, 1])
 
 	res.once('close', () => {
 		const d = pendingRequests.get(req) as [number, number]
 		pendingRequests.delete(req)
 
 		updateStatus(`${res.statusCode}`, d)
+
+		const maxY = [...pendingRequests.values()].reduce((t, [_, y]) => Math.max(y, t), 0)
+		latestLogs.splice(0, latestLogs.length - maxY)
 	})
 
 	next()
@@ -349,6 +374,9 @@ const ex = express()
 .use(((err, req, res, _) => { //? Error handler
 	const errMsg = `We got some error here [${req.method} ${decodeURI(req.originalUrl)}]:\n${err.stack}`
 	console.error(errMsg)
+
+	latestLogs.push(...errMsg.split('\n').map(v => v.length))
+
 	movePendingRequests(errMsg.split('\n').length)
 
 	res.status(500).format({
