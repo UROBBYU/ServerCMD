@@ -248,7 +248,20 @@ const exStatic = express.static('./', {
 const ex = express()
 
 .use((req, res, next) => { //? Logger
-	const line = `[${new Date().toISOString()}] ${req.method} ${decodeURI(req.originalUrl)} `
+	let line = `[${new Date().toISOString()}]\n`
+
+	if (req) {
+		const h = req.socket.remoteAddress ?? '-'
+		const u = req?.accepted ?? '-'
+		const r = `${req.method} ${req.path} ${req.protocol.toUpperCase()}/${req.httpVersion}`
+		const s = res?.statusCode ?? '-'
+		const b = res?.get('Content-Length') ?? '-'
+		const ref = req.get('Referer') ?? '-'
+		const ua = req.get('User-Agent') ?? '-'
+
+		line += `${h} - ${u} "${r}" ${s} ${b} "${ref}" "${ua}"`
+	}
+
 	console.log(line)
 
 	movePendingRequests(1)
