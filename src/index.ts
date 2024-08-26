@@ -201,6 +201,8 @@ const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 	})
 })
 
+const ETX = Buffer.of(3)
+const EOT = Buffer.of(4)
 const LOG1024 = Math.log(1024)
 const LSYMS = ['_/‾', '/‾\\', '‾\\_', '\\_/']
 const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
@@ -237,13 +239,14 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 
 let lSymbol = 0
 setInterval(() => {
+	process.stdout.write('\x1b7')
 	pendingRequests.forEach((d, r) => {
 		if (r.closed) pendingRequests.delete(r)
 
 		updateStatus(LSYMS[lSymbol], d)
 	})
 
-	process.stdout.write(`\x1b[K${pendingRequests.size} request${pendingRequests.size === 1 ? '' : 's'} pending\r`)
+	process.stdout.write(`\x1b8\x1b[1K\r${pendingRequests.size} request${pendingRequests.size === 1 ? '' : 's'} pending\r`) // \x1b[K
 
 	lSymbol = (lSymbol + 1) % LSYMS.length
 }, 4e2)
@@ -403,7 +406,12 @@ isPortFree(PORT).then(isFree => {
 
 	const server = ex.listen(PORT, () => {
 		const port = (server.address() as net.SocketAddress).port
-		console.log(`http://localhost:${port} is listening...`)
+		console.log(`http://localhost:${port} is listening.\nTo stop press CTRL+C...`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
+
+		process.stdin.setRawMode(true)
+		process.stdin.on('data', data => {
+			if (data.equals(ETX) || data.equals(EOT)) process.exit()
+		})
 	})
 })
