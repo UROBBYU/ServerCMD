@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
-import net = require('node:net')
-import express = require('express')
-import open = require('open')
-import fs = require('node:fs')
-import fsp = require('node:fs/promises')
-const { resolve, join } = require('node:path')
-import yargs = require('yargs/yargs')
+import { SocketAddress, createConnection } from'node:net'
+
+import open from 'open'
+import * as fs from 'node:fs'
+import { resolve, join } from 'node:path'
+import yargs from 'yargs/yargs'
+import { IncomingMessage, ServerResponse, createServer } from 'node:http'
+import accepts from 'accepts'
+import serv, { NextFunc } from './static'
+import etag from 'etag'
 
 //? #################################
 //? ############# YARGS #############
@@ -17,6 +20,7 @@ const argv = yargs(process.argv.splice(2))
 .scriptName('serve')
 .usage('serve [options...]')
 .alias('h', 'help')
+.group('h', 'General Options:')
 .epilogue('You can add "//" to the end of URL to force directory list instead of "index.html" fallback.')
 .detectLocale(false)
 .version(false)
@@ -25,6 +29,7 @@ const argv = yargs(process.argv.splice(2))
 .options({
 	p: {
 		alias: 'port',
+		group: 'General Options:',
 		desc: 'Server port',
 		type: 'number',
 		default: 80,
@@ -38,31 +43,21 @@ const argv = yargs(process.argv.splice(2))
 	},
 	o: {
 		alias: 'open',
+		group: 'General Options:',
 		desc: 'Open in browser',
 		type: 'boolean',
 		default: false
 	},
 	i: {
 		alias: 'init',
+		group: 'General Options:',
 		desc: 'Init serve project',
 		type: 'boolean',
 		default: false
 	},
-	x: {
-		alias: 'extensions',
-		desc: 'File extension fallbacks: If a file is not found, search for files with the specified extensions',
-		type: 'array',
-		default: ['html', 'htm'],
-		coerce(arg: any[]) {
-			arg.forEach(v => {
-				const type = typeof v
-				if (type !== 'string') throw new Error(`File extensions must be strings. [${v}] is of type '${type}'`)
-			})
-			return arg as string[]
-		}
-	},
 	e: {
 		alias: 'err-page',
+		group: 'General Options:',
 		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
 		type: 'string',
 		default: null,
@@ -70,6 +65,7 @@ const argv = yargs(process.argv.splice(2))
 	},
 	n: {
 		alias: 'not-found-page',
+		group: 'General Options:',
 		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
 		type: 'string',
 		default: null,
@@ -77,10 +73,63 @@ const argv = yargs(process.argv.splice(2))
 	},
 	r: {
 		alias: 'routes',
+		group: 'General Options:',
 		desc: 'Path to routes map. Priority: arg > ./.routes',
 		type: 'string',
 		default: null,
 		defaultDescription: '.routes'
+	},
+	'sd': {
+		alias: 's-dotfiles',
+		group: 'Static Options:',
+		desc: 'Determines how dotfiles (files or directories that begin with a dot “.”) are treated',
+		type: 'string',
+		choices: ['allow', 'ignore', 'deny'],
+		default: 'ignore',
+		defaultDescription: 'ignore',
+		coerce(arg: string) {
+			if (!['allow', 'ignore', 'deny'].includes(arg))
+				throw new Error(`Param '--s-dotfiles' must be one of the following: 'allow' | 'ignore' | 'deny'`)
+			return arg as 'allow' | 'ignore' | 'deny'
+		}
+	},
+	'st': {
+		alias: 's-etag',
+		group: 'Static Options:',
+		desc: 'Enable or disable etag generation',
+		type: 'boolean',
+		default: true,
+		defaultDescription: 'true'
+	},
+	'sx': {
+		alias: 's-extensions',
+		group: 'Static Options:',
+		desc: 'Sets file extension fallbacks: If a file is not found, search for files with the specified extensions and serve the first one found',
+		type: 'string',
+		array: true,
+		default: null,
+		defaultDescription: 'false'
+	},
+	'si': {
+		alias: 's-index',
+		group: 'Static Options:',
+		desc: 'Sends the specified directory index file. Set to false to disable directory indexing',
+		type: 'string',
+		default: 'index.html',
+		defaultDescription: 'index.html'
+	},
+	'sa': {
+		alias: 's-max-age',
+		group: 'Static Options:',
+		desc: 'Set the max-age property of the Cache-Control header in milliseconds or a string in ms format',
+		type: 'number',
+		default: 0,
+		defaultDescription: '0',
+		coerce(arg: number) {
+			if (!(0 <= arg && arg < Infinity))
+				throw new Error(`Param '--s-max-age' must be finite positive value`)
+			return arg
+		}
 	}
 })
 .parseSync()
@@ -93,6 +142,14 @@ interface Route {
 	redirect: boolean
 	try(path: string): string | undefined
 }
+
+interface Resp extends ServerResponse {
+	locals: {[key: string]: any}
+	log: () => this
+	typeLen: (type: string, len: number) => this
+}
+
+type ReqListener = (req: IncomingMessage, res: Resp) => void
 
 //? #################################
 //? ######## PROCESSING ARGS ########
@@ -130,8 +187,13 @@ if (!fs.existsSync(routesPath)) {
 	console.log('not found')
 } else console.log('found')
 
+const DOTFILES = argv.sd ?? 'ignore'
+const ETAG = argv.st ?? true
+const EXTENSIONS = argv.sx ?? false
+const INDEX = argv.si ?? 'index.html'
+const MAX_AGE = argv.sa ?? 0
+
 const OPEN_IN_BROWSER = argv.o
-const EXTENSION_FALLBACKS = argv.x
 const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
 	: `<h1>500 | Internal Server Error</h1>
 Script asset "${resolve(__dirname + '/assets/500.html')}" is missing`
@@ -191,7 +253,7 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 //? #################################
 
 const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
-	const client = net.createConnection({port}, () => {
+	const client = createConnection({port}, () => {
 		client.destroy()
 		res(false)
 	}).once('error', (err: NodeJS.ErrnoException) => {
@@ -200,6 +262,10 @@ const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 		else rej(err)
 	})
 })
+
+const getPath = (url: string) => url.split('?')[0]
+
+const redirect = (res: Resp, loc: string) => res.writeHead(302, {'location': loc})
 
 const ETX = Buffer.of(3)
 const EOT = Buffer.of(4)
@@ -211,7 +277,7 @@ const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
 	'td:nth-child(n+2){text-align:right;text-wrap:nowrap}</style>'
 const LIST_HEADER = '<tr><th>Name</th><th>Date modified</th><th>Size</th></tr>'
 
-const pendingRequests: Map<express.Request, [number, number]> = new Map()
+const pendingRequests: Map<IncomingMessage, [number, number]> = new Map()
 const latestLogs: number[] = []
 
 const getDataSizeUnit = (n: number) => n ? Math.trunc(Math.log(Math.abs(n)) / LOG1024) : 0
@@ -253,31 +319,21 @@ setInterval(() => {
 
 process.stdout.write('\x1b[?25l')
 
-//? #################################
-//? ############# SERVER ############
-//? #################################
-
-const exStatic = express.static('./', {
-	extensions: EXTENSION_FALLBACKS
-})
-
-const ex = express()
-
-.use((req, res, next) => { //? Logger
+const reqLog = (req: IncomingMessage, res: Resp) => { //? Logger
 	const h = req.socket.remoteAddress ?? '-'
-	const r = `${req.method} ${req.path} ${req.protocol.toUpperCase()}/${req.httpVersion}`
-	const b = res.get('Content-Length') ?? '-'
-	const ref = req.get('Referer') ?? '-'
-	const ua = req.get('User-Agent') ?? '-'
+	const r = `${req.method} ${req.url} HTTP/${req.httpVersion}`
+	const b = res.getHeader('Content-Length') ?? '-'
+	const ref = req.headers['referer'] ?? '-'
+	const ua = req.headers['user-agent'] ?? '-'
 
-	const line = `[${new Date().toISOString()}] ${h} - - "${r}" ${b} "${ref}" "${ua}" ---`
+	const afterStatus = `${b} "${ref}" "${ua}"`
+	const line = `[${new Date().toISOString()}] ${h} - - "${r}" --- ${afterStatus}`
 
 	latestLogs.push(line.length)
-
 	console.log(line)
 
 	movePendingRequests(1)
-	pendingRequests.set(req, [line.length - 3, 1])
+	pendingRequests.set(req, [line.length - afterStatus.length - 4, 1])
 
 	res.once('close', () => {
 		const d = pendingRequests.get(req) as [number, number]
@@ -289,39 +345,75 @@ const ex = express()
 		latestLogs.splice(0, latestLogs.length - maxY)
 	})
 
-	next()
+	return res
+}
+
+//? #################################
+//? ############# SERVER ############
+//? #################################
+
+const exStatic = serv('./', {
+	dotfiles: DOTFILES,
+	etag: ETAG,
+	extensions: EXTENSIONS,
+	index: INDEX,
+	maxAge: MAX_AGE,
+	logger: (req, res) => reqLog(req, res as Resp),
 })
 
-.use('/', (req, res, next) => { //? General handler
-	let path = decodeURI(req.path)
-	if (req.path.startsWith('//')) {
+const genHandler: ReqListener = (req, res) => { //? General handler
+	const reqPath = getPath(req.url!)
+	let path = decodeURI(reqPath)
+	if (reqPath.startsWith('//')) {
 		res.locals.fs = true
 		path = path.slice(1)
-		return next()
+		return fileHandler(req, res)
 	}
 
 	let [redir, newPath] = route(encodeURI(path))
-	req.url = newPath + req.originalUrl.split('?').splice(1).join('?')
+	req.url = newPath + req.url!.split('?').splice(1).join('?')
 
-	if (redir) return res.redirect(req.url)
+	if (redir) {
+		res.log()
+		return redirect(res, req.url)
+	}
 
-	if (newPath.includes('/.')) return next()
+	if (newPath.includes('/.')) return fileHandler(req, res)
 
-	exStatic(req, res, next)
-})
+	const nx: NextFunc = (err) => {
+		if (err) {
+			res.locals.err = err
+			errorHandler(req, res)
+		}
+		else fileHandler(req, res)
+	}
 
-.use(async (req, res, next) => { //? File handler
-	const path = decodeURI(req.path)
+	exStatic(req, res, nx)
+}
+
+const fileHandler: ReqListener = async (req, res) => { //? File handler
+	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
 		const faviconPath = resolve(__dirname + '/assets/favicon.ico')
-		if (fs.existsSync(faviconPath)) return fs.createReadStream(faviconPath).pipe(res)
+
+		if (fs.existsSync(faviconPath)) {
+			const stats = fs.statSync(faviconPath)
+			const etagValue = etag(stats)
+			res
+			.setHeader('ETag', etagValue)
+			.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+
+			if (req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
+			res.typeLen('image/x-icon', stats.size).log()
+			return fs.createReadStream(faviconPath).pipe(res)
+		}
 	}
 
 	const fpath = resolve(`.${decodeURI(path)}`)
 	if (path.endsWith('/') && !path.includes('/.') && fs.existsSync(fpath)) {
-		const plist = (await fsp.readdir(fpath)).filter(p => !p.startsWith('.'))
+		const plist = (await fs.promises.readdir(fpath)).filter(p => !p.startsWith('.'))
 
-		const flist = (await Promise.all(plist.map(f => fsp.stat(join(fpath, f)))))
+		const flist = (await Promise.all(plist.map(f => fs.promises.stat(join(fpath, f)))))
 			.map((f, i) => ({
 				name: plist[i] + (f.isDirectory() ? '/' : ''),
 				size: f.size,
@@ -330,8 +422,10 @@ const ex = express()
 				toString() { return this.name }
 			}))
 
-		return res.format({
-			html() {
+		const accept = accepts(req)
+
+		switch (accept.type(['html', 'json'])) {
+			case 'html':
 				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
 				const list = flist.map(f => {
 					const dsu = getDataSizeUnit(f.size)
@@ -343,59 +437,106 @@ const ex = express()
 					'</tr>'
 				}).join('')
 
-				res.send(`<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
-			},
+				const body = `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`
+				res
+				.typeLen('text/html', body.length)
+				.log()
+				.end(body)
+				break
+			case 'json':
+				const jsonBody = JSON.stringify(flist)
+				res
+				.typeLen('application/json', jsonBody.length)
+				.log()
+				.end(jsonBody)
+				break
+			default:
+				const textBody = flist.join()
+				res
+				.typeLen('text/plain', textBody.length)
+				.log()
+				.end(textBody)
+		}
 
-			json() {
-				res.json(flist)
-			},
-
-			text() {
-				res.send(flist.join())
-			}
-		})
+		return
 	}
 
-	return next()
-})
+	return notFoundHandler(req, res)
+}
 
-.use((_, res) => res.status(404).format({ //? "Not Found" handler
-		html() {
-			res.send(NOT_FOUND_PAGE)
-		},
+const notFoundHandler: ReqListener = (req, res) => {
+	const accept = accepts(req)
 
-		json() {
-			res.json({ error: 'Not Found' })
-		},
+	res.statusCode = 404
 
-		text() {
-			res.send('Not Found')
-		}
-	})
-)
+	switch (accept.type(['html', 'json'])) {
+		case 'html':
+			res
+			.typeLen('text/html', NOT_FOUND_PAGE.length)
+			.log()
+			.end(NOT_FOUND_PAGE)
+			break
+		case 'json':
+			const jsonBody = '{"error":"Not Found"}'
+			res
+			.typeLen('application/json', jsonBody.length)
+			.log()
+			.end(jsonBody)
+			break
+		default:
+			const textBody = 'Not Found'
+			res
+			.typeLen('text/plain', textBody.length)
+			.log()
+			.end(textBody)
+	}
+}
 
-.use(((err, req, res, _) => { //? Error handler
-	const errMsg = `We got some error here [${req.method} ${decodeURI(req.originalUrl)}]:\n${err.stack}`
+const errorHandler: ReqListener = (req, res) => { //? Error handler
+	const err = res.locals.err
+	const errMsg = `We got some error here [${req.method} ${decodeURI(req.url!)}]:\n${err.stack}`
 	console.error(errMsg)
 
 	latestLogs.push(...errMsg.split('\n').map(v => v.length))
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	res.status(500).format({
-		html() {
-			res.send(ERROR_PAGE)
-		},
+	res.statusCode = 500
 
-		json() {
-			res.json({ error: 'Internal Server Error' })
-		},
+	const accept = accepts(req)
 
-		text() {
-			res.send('Internal Server Error')
-		}
-	})
-}) as express.ErrorRequestHandler)
+	switch (accept.type(['html', 'json'])) {
+		case 'html':
+			res
+			.typeLen('text/html', ERROR_PAGE.length)
+			.log()
+			.end(ERROR_PAGE)
+			break
+		case 'json':
+			const jsonBody = '{"error":"Internal Server Error"}'
+			res
+			.typeLen('application/json', jsonBody.length)
+			.log()
+			.end(jsonBody)
+			break
+		default:
+			const textBody = 'Internal Server Error'
+			res
+			.typeLen('text/plain', textBody.length)
+			.log()
+			.end(textBody)
+	}
+}
+
+const ex = createServer((req, res) => {
+	const resp = res as Resp
+	resp.locals = {}
+	resp.log = () => reqLog(req, resp)
+	resp.typeLen = (type, len) => resp
+		.setHeader('Content-Type', type)
+		.setHeader('Content-Length', len)
+	genHandler(req, resp)
+})
 
 let PORT = argv.p
 isPortFree(PORT).then(isFree => {
@@ -405,7 +546,7 @@ isPortFree(PORT).then(isFree => {
 	}
 
 	const server = ex.listen(PORT, () => {
-		const port = (server.address() as net.SocketAddress).port
+		const port = (server.address() as SocketAddress).port
 		console.log(`http://localhost:${port} is listening.\nTo stop press CTRL+C...`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 
