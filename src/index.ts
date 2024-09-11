@@ -15,11 +15,11 @@ import yargs = require('yargs/yargs')
 const argv = yargs(process.argv.splice(2))
 
 .scriptName('serve')
-.usage('serve [options...]')
+.usage('$0 [options...]')
 .alias('h', 'help')
-.epilogue('You can add "//" to the end of URL to force directory list instead of "index.html" fallback.')
+.alias('v', 'version')
+.epilogue('You can add "//" to the start of URL path to force directory list instead of "index.html" fallback. Example: "http://example.com//file/path/".')
 .detectLocale(false)
-.version(false)
 .strict(true)
 
 .options({
@@ -27,14 +27,7 @@ const argv = yargs(process.argv.splice(2))
 		alias: 'port',
 		desc: 'Server port',
 		type: 'number',
-		default: 80,
-		coerce(arg: number) {
-			if (!Number.isInteger(arg))
-				throw new Error('Port must be an integer')
-			if (arg < 0 || arg > 65535)
-				throw new Error('Port must be in range [0-65535]')
-			return <number>arg
-		}
+		default: 80
 	},
 	o: {
 		alias: 'open',
@@ -51,37 +44,40 @@ const argv = yargs(process.argv.splice(2))
 	x: {
 		alias: 'extensions',
 		desc: 'File extension fallbacks: If a file is not found, search for files with the specified extensions',
-		type: 'array',
-		default: ['html', 'htm'],
-		coerce(arg: any[]) {
-			arg.forEach(v => {
-				const type = typeof v
-				if (type !== 'string') throw new Error(`File extensions must be strings. [${v}] is of type '${type}'`)
-			})
-			return arg as string[]
-		}
+		type: 'string',
+		array: true,
+		default: ['html', 'htm']
 	},
 	e: {
 		alias: 'err-page',
 		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
 		type: 'string',
-		default: null,
-		defaultDescription: '.500.html'
+		default: './.500.html'
 	},
 	n: {
 		alias: 'not-found-page',
 		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
 		type: 'string',
-		default: null,
-		defaultDescription: '.404.html'
+		default: './.404.html'
 	},
 	r: {
 		alias: 'routes',
 		desc: 'Path to routes map. Priority: arg > ./.routes',
 		type: 'string',
-		default: null,
-		defaultDescription: '.routes'
+		default: './.routes'
 	}
+})
+.check((argv) => {
+	if (!Number.isInteger(argv.p))
+		throw new Error('Port must be an integer')
+
+	if (argv.p < 0 || argv.p > 65535)
+		throw new Error('Port must be in range [0-65535]')
+
+	if (argv.x.some(v => typeof v !== 'string'))
+		throw new Error('File extensions must be strings')
+
+	return true
 })
 .parseSync()
 
@@ -100,7 +96,7 @@ interface Route {
 
 process.stdout.write(`Root: ${resolve('./')}\nError page: `)
 
-let errorPath = argv.e ?? './.500.html'
+let errorPath = argv.e
 if (!fs.existsSync(errorPath)) {
 	errorPath = resolve(__dirname + '/assets/500.html')
 
@@ -112,7 +108,7 @@ if (!fs.existsSync(errorPath)) {
 
 process.stdout.write('Not Found page: ')
 
-let nfPath = argv.e ?? './.404.html'
+let nfPath = argv.n
 if (!fs.existsSync(nfPath)) {
 	nfPath = resolve(__dirname + '/assets/404.html')
 
@@ -124,7 +120,7 @@ if (!fs.existsSync(nfPath)) {
 
 process.stdout.write('Routes list: ')
 
-let routesPath = argv.r ?? './.routes'
+let routesPath = argv.r
 if (!fs.existsSync(routesPath)) {
 	routesPath = ''
 	console.log('not found')
