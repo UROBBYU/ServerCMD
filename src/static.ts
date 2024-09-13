@@ -51,8 +51,6 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 		try {
 			let path = `.${req.url}`
 
-			res.setHeader('X-Powered-By', 'urobbyu/serve')
-
 			const isFileFound = (path: string) => fs.existsSync(join(root, path))
 			const isDir = (path: string) => fs.statSync(join(root, path)).isDirectory()
 
