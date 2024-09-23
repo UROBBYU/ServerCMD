@@ -82,7 +82,7 @@ const argv = yargs(process.argv.splice(2))
 	'sd': {
 		alias: 's-dotfiles',
 		group: 'Static Options:',
-		desc: "Determines how dotfiles (files or directories that begin with a dot “.”) are treated",
+		desc: 'Determines how dotfiles (files or directories that begin with a dot ".") are treated',
 		type: 'string',
 		choices: ['allow', 'ignore', 'deny'],
 		default: 'ignore',
@@ -95,10 +95,9 @@ const argv = yargs(process.argv.splice(2))
 	'st': {
 		alias: 's-etag',
 		group: 'Static Options:',
-		desc: "Etag generation. Set to false to disable etag generation",
+		desc: "Etag generation. Use --no-st to disable it",
 		type: 'boolean',
-		default: true,
-		defaultDescription: 'true'
+		default: true
 	},
 	'sx': {
 		alias: 's-extensions',
@@ -112,15 +111,14 @@ const argv = yargs(process.argv.splice(2))
 	'si': {
 		alias: 's-index',
 		group: 'Static Options:',
-		desc: "Sends the specified directory index file. Set to false to disable directory indexing. Use --no-key to set key to false",
+		desc: "Sends the specified directory index file. Use --no-si to disable directory indexing",
 		type: 'string',
-		default: 'index.html',
-		defaultDescription: 'index.html'
+		default: 'index.html'
 	},
 	'sa': {
 		alias: 's-max-age',
-		group: 'Static Options:',	// TODO: https://www.npmjs.com/package/ms
-		desc: "Set the max-age property of the Cache-Control header in milliseconds or a string in ms format",
+		group: 'Static Options:',
+		desc: "Set the max-age property of the Cache-Control header with a string in ms format",
 		type: 'number',
 		default: 0,
 		coerce(arg: number) {
@@ -145,6 +143,7 @@ interface Response extends ServerResponse {
 	locals: {[key: string]: any}
 	log: () => this
 	typeLen: (type: string, len: number) => this
+	send: (type: string, body: string | Buffer) => this
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -362,7 +361,7 @@ const exStatic = serv('./', {
 const genHandler: RequestListener = (req, res) => { //? General handler
 	const reqPath = getPath(req.url!)
 	let path = decodeURI(reqPath)
-	if (req.method !== 'GET') notFoundHandler(req, res)
+	if (req.method !== 'GET') notFoundHandler(req, res) // TODO: error
 	if (reqPath.startsWith('//')) {
 		res.locals.fs = true
 		path = path.slice(1)
@@ -390,13 +389,6 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 	exStatic(req, res, nx)
 }
 
-const sendResponse = (res: Response, type: string, body: string | Buffer) => {
-	res
-	.typeLen(type, body.length)
-	.log()
-	.end(body)
-}
-
 const fileHandler: RequestListener = async (req, res) => { //? File handler
 	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
@@ -406,7 +398,7 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 			const stats = fs.statSync(faviconPath)
 			const etagValue = etag(stats)
 			res
-			.setHeader('X-Powered-By', 'urobbyu/serve')
+			.setHeader('X-Powered-By', 'urobbyu/serve') // TODO: send always
 			.setHeader('ETag', etagValue)
 			.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
 
@@ -428,7 +420,7 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-		const accept = accepts(req) // TODO: https://expressjs.com/en/4x/api.html#res.format
+		const accept = accepts(req)
 		switch (accept.type(['html', 'json'])) {
 			case 'html':
 				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
@@ -442,13 +434,13 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 					'</tr>'
 				}).join('')
 
-				sendResponse(res, 'text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
 				break
 			case 'json':
-				sendResponse(res, 'application/json', JSON.stringify(flist))
+				res.send('application/json', JSON.stringify(flist))
 				break
 			default:
-				sendResponse(res, 'text/plain', flist.join())
+				res.send('text/plain', flist.join())
 		}
 
 		return
@@ -464,13 +456,13 @@ const notFoundHandler: RequestListener = (req, res) => {
 
 	switch (accept.type(['html', 'json'])) {
 		case 'html':
-			sendResponse(res, 'text/html', NOT_FOUND_PAGE)
+			res.send('text/html', NOT_FOUND_PAGE)
 			break
 		case 'json':
-			sendResponse(res, 'application/json', '{"error":"Not Found"}')
+			res.send('application/json', '{"error":"Not Found"}')
 			break
 		default:
-			sendResponse(res, 'text/plain', 'Not Found')
+			res.send('text/plain', 'Not Found')
 	}
 }
 
@@ -489,13 +481,13 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 
 	switch (accept.type(['html', 'json'])) {
 		case 'html':
-			sendResponse(res, 'text/html', ERROR_PAGE)
+			res.send('text/html', ERROR_PAGE)
 			break
 		case 'json':
-			sendResponse(res, 'application/json', '{"error":"Internal Server Error"}')
+			res.send('application/json', '{"error":"Internal Server Error"}')
 			break
 		default:
-			sendResponse(res, 'text/plain', 'Internal Server Error')
+			res.send('text/plain', 'Internal Server Error')
 	}
 }
 
@@ -506,6 +498,13 @@ const ex = createServer((req, res) => {
 	resp.typeLen = (type, len) => resp
 		.setHeader('Content-Type', type)
 		.setHeader('Content-Length', len)
+	resp.send = (type, body) => {
+		resp
+		.typeLen(type, body.length)
+		.log()
+		.end(body)
+		return resp
+	}
 	genHandler(req, resp)
 })
 
