@@ -95,7 +95,7 @@ const argv = yargs(process.argv.splice(2))
 	'st': {
 		alias: 's-etag',
 		group: 'Static Options:',
-		desc: "Etag generation. Use --no-st to disable it",
+		desc: 'Etag generation. Use "--no-st" to disable it',
 		type: 'boolean',
 		default: true
 	},
@@ -111,14 +111,14 @@ const argv = yargs(process.argv.splice(2))
 	'si': {
 		alias: 's-index',
 		group: 'Static Options:',
-		desc: "Sends the specified directory index file. Use --no-si to disable directory indexing",
+		desc: 'Sends the specified directory index file. Use "--no-si" to disable directory indexing',
 		type: 'string',
 		default: 'index.html'
 	},
 	'sa': {
 		alias: 's-max-age',
 		group: 'Static Options:',
-		desc: "Set the max-age property of the Cache-Control header with a string in ms format",
+		desc: "Set the max-age property of the Cache-Control header with a string in milliseconds",
 		type: 'number',
 		default: 0,
 		coerce(arg: number) {
@@ -398,7 +398,6 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 			const stats = fs.statSync(faviconPath)
 			const etagValue = etag(stats)
 			res
-			.setHeader('X-Powered-By', 'urobbyu/serve') // TODO: send always
 			.setHeader('ETag', etagValue)
 			.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
 
@@ -420,7 +419,7 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-		const accept = accepts(req)
+		const accept = accepts(req) // TODO: res.format()
 		switch (accept.type(['html', 'json'])) {
 			case 'html':
 				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
@@ -490,7 +489,7 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 			res.send('text/plain', 'Internal Server Error')
 	}
 }
-
+//! headers broke, check it fff
 const ex = createServer((req, res) => {
 	const resp = res as Response
 	resp.locals = {}
@@ -498,13 +497,11 @@ const ex = createServer((req, res) => {
 	resp.typeLen = (type, len) => resp
 		.setHeader('Content-Type', type)
 		.setHeader('Content-Length', len)
-	resp.send = (type, body) => {
-		resp
+	resp.send = (type, body) => resp
+		.setHeader('X-Powered-By', 'urobbyu/serve')
 		.typeLen(type, body.length)
 		.log()
 		.end(body)
-		return resp
-	}
 	genHandler(req, resp)
 })
 
