@@ -30,7 +30,7 @@ const argv = yargs(process.argv.splice(2))
 	p: {
 		alias: 'port',
 		group: 'General Options:',
-		desc: "Server port",
+		desc: 'Server port',
 		type: 'number',
 		default: 80,
 		coerce(arg: number) {
@@ -44,21 +44,21 @@ const argv = yargs(process.argv.splice(2))
 	o: {
 		alias: 'open',
 		group: 'General Options:',
-		desc: "Open in browser",
+		desc: 'Open in browser',
 		type: 'boolean',
 		default: false
 	},
 	i: {
 		alias: 'init',
 		group: 'General Options:',
-		desc: "Init serve project",
+		desc: 'Init serve project',
 		type: 'boolean',
 		default: false
 	},
 	e: {
 		alias: 'err-page',
 		group: 'General Options:',
-		desc: "Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html",
+		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
 		type: 'string',
 		default: null,
 		defaultDescription: '.500.html'
@@ -66,7 +66,7 @@ const argv = yargs(process.argv.splice(2))
 	n: {
 		alias: 'not-found-page',
 		group: 'General Options:',
-		desc: "Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html",
+		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
 		type: 'string',
 		default: null,
 		defaultDescription: '.404.html'
@@ -74,7 +74,7 @@ const argv = yargs(process.argv.splice(2))
 	r: {
 		alias: 'routes',
 		group: 'General Options:',
-		desc: "Path to routes map. Priority: arg > ./.routes",
+		desc: 'Path to routes map. Priority: arg > ./.routes',
 		type: 'string',
 		default: null,
 		defaultDescription: '.routes'
@@ -102,7 +102,7 @@ const argv = yargs(process.argv.splice(2))
 	'sx': {
 		alias: 's-extensions',
 		group: 'Static Options:',
-		desc: "Sets file extension fallbacks: If a file is not found, search for files with the specified extensions and serve the first one found",
+		desc: 'Sets file extension fallbacks: If a file is not found, search for files with the specified extensions and serve the first one found',
 		type: 'string',
 		array: true,
 		default: null,
@@ -118,7 +118,7 @@ const argv = yargs(process.argv.splice(2))
 	'sa': {
 		alias: 's-max-age',
 		group: 'Static Options:',
-		desc: "Set the max-age property of the Cache-Control header with a string in milliseconds",
+		desc: 'Sets the max-age property of the Cache-Control header',
 		type: 'number',
 		default: 0,
 		coerce(arg: number) {
@@ -489,7 +489,7 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 			res.send('text/plain', 'Internal Server Error')
 	}
 }
-//! headers broke, check it fff
+
 const ex = createServer((req, res) => {
 	const resp = res as Response
 	resp.locals = {}
@@ -498,10 +498,11 @@ const ex = createServer((req, res) => {
 		.setHeader('Content-Type', type)
 		.setHeader('Content-Length', len)
 	resp.send = (type, body) => resp
-		.setHeader('X-Powered-By', 'urobbyu/serve')
 		.typeLen(type, body.length)
 		.log()
 		.end(body)
+
+	resp.setHeader('X-Powered-By', 'urobbyu/serve')
 	genHandler(req, resp)
 })
 
