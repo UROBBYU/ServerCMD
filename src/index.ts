@@ -144,6 +144,7 @@ interface Response extends ServerResponse {
 	log: () => this
 	typeLen: (type: string, len: number) => this
 	send: (type: string, body: string | Buffer) => this
+	format: (type: string, func: () => {}) => void // format({ 'someType': () => {} }) also possible
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -419,7 +420,7 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-		const accept = accepts(req) // TODO: res.format()
+		const accept = accepts(req) // TODO: https://expressjs.com/ru/api.html#res.format
 		switch (accept.type(['html', 'json'])) {
 			case 'html':
 				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
@@ -501,6 +502,34 @@ const ex = createServer((req, res) => {
 		.typeLen(type, body.length)
 		.log()
 		.end(body)
+	resp.format = (type, func) => { // TODO: fix this
+		if (type == 'someType') func() // either this
+
+		// or this
+		/*
+		switch (accept.type(['html', 'json'])) {
+			case 'html':
+				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
+				const list = flist.map(f => {
+					const dsu = getDataSizeUnit(f.size)
+					const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
+
+					return `<tr><td><a href="./${f}">${f}</a></td>` +
+					`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
+					(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
+					'</tr>'
+				}).join('')
+
+				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				break
+			case 'json':
+				res.send('application/json', JSON.stringify(flist))
+				break
+			default:
+				res.send('text/plain', flist.join())
+		}
+		*/
+	}
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
 	genHandler(req, resp)
