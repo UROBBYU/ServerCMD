@@ -144,7 +144,8 @@ interface Response extends ServerResponse {
 	log: () => this
 	typeLen: (type: string, len: number) => this
 	send: (type: string, body: string | Buffer) => this
-	format: (type: string, func: () => {}) => void // format({ 'someType': () => {} }) also possible
+	format: (map: {[key: string]: () => void }) => this
+	status: (code: number) => this
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -362,7 +363,7 @@ const exStatic = serv('./', {
 const genHandler: RequestListener = (req, res) => { //? General handler
 	const reqPath = getPath(req.url!)
 	let path = decodeURI(reqPath)
-	if (req.method !== 'GET') notFoundHandler(req, res) // TODO: error
+	if (req.method !== 'GET') return notFoundHandler(req, res)
 	if (reqPath.startsWith('//')) {
 		res.locals.fs = true
 		path = path.slice(1)
@@ -420,9 +421,8 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-		const accept = accepts(req) // TODO: https://expressjs.com/ru/api.html#res.format
-		switch (accept.type(['html', 'json'])) {
-			case 'html':
+		res.format({
+			html() {
 				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
 				const list = flist.map(f => {
 					const dsu = getDataSizeUnit(f.size)
@@ -435,13 +435,10 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				}).join('')
 
 				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
-				break
-			case 'json':
-				res.send('application/json', JSON.stringify(flist))
-				break
-			default:
-				res.send('text/plain', flist.join())
-		}
+			},
+			json() { res.send('application/json', JSON.stringify(flist)) },
+			text() { res.send('text/plain', flist.join()) }
+		})
 
 		return
 	}
@@ -452,18 +449,11 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 const notFoundHandler: RequestListener = (req, res) => {
 	const accept = accepts(req)
 
-	res.statusCode = 404
-
-	switch (accept.type(['html', 'json'])) {
-		case 'html':
-			res.send('text/html', NOT_FOUND_PAGE)
-			break
-		case 'json':
-			res.send('application/json', '{"error":"Not Found"}')
-			break
-		default:
-			res.send('text/plain', 'Not Found')
-	}
+	res.status(404).format({
+		html() { res.send('text/html', NOT_FOUND_PAGE) },
+		json() { res.send('application/json', '{"error":"Not Found"}') },
+		text() { res.send('text/plain', 'Not Found') }
+	})
 }
 
 const errorHandler: RequestListener = (req, res) => { //? Error handler
@@ -475,20 +465,11 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	res.statusCode = 500
-
-	const accept = accepts(req)
-
-	switch (accept.type(['html', 'json'])) {
-		case 'html':
-			res.send('text/html', ERROR_PAGE)
-			break
-		case 'json':
-			res.send('application/json', '{"error":"Internal Server Error"}')
-			break
-		default:
-			res.send('text/plain', 'Internal Server Error')
-	}
+	res.status(500).format({
+		html() { res.send('text/html', ERROR_PAGE) },
+		json() { res.send('application/json', '{"error":"Internal Server Error"}') },
+		text() { res.send('text/plain', 'Internal Server Error') }
+	})
 }
 
 const ex = createServer((req, res) => {
@@ -502,33 +483,28 @@ const ex = createServer((req, res) => {
 		.typeLen(type, body.length)
 		.log()
 		.end(body)
-	resp.format = (type, func) => { // TODO: fix this
-		if (type == 'someType') func() // either this
+	resp.status = (code) => {
+		resp.statusCode = code
+		return resp
+	}
+	resp.format = (map) => {
+		const mimeTypes = Object.keys(map)
+		let acceptType = accepts(req).type(mimeTypes)
 
-		// or this
-		/*
-		switch (accept.type(['html', 'json'])) {
-			case 'html':
-				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
-				const list = flist.map(f => {
-					const dsu = getDataSizeUnit(f.size)
-					const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
+		if (!acceptType) {
+			const body = JSON.stringify({
+				code: 'UnsupportedType',
+				message: 'Only attached content types are supported.',
+				types: mimeTypes
+			})
 
-					return `<tr><td><a href="./${f}">${f}</a></td>` +
-					`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
-					(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
-					'</tr>'
-				}).join('')
-
-				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
-				break
-			case 'json':
-				res.send('application/json', JSON.stringify(flist))
-				break
-			default:
-				res.send('text/plain', flist.join())
+			return resp.status(406).send('application/json', body)
 		}
-		*/
+		acceptType = typeof acceptType === 'string' ? acceptType : acceptType[0]
+
+		map[acceptType]()
+
+		return resp
 	}
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
