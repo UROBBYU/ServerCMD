@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { SocketAddress, createConnection } from'node:net'
+import { SocketAddress, createConnection } from 'node:net'
 
 import open from 'open'
 import * as fs from 'node:fs'
@@ -88,7 +88,7 @@ const argv = yargs(process.argv.splice(2))
 		default: 'ignore',
 		coerce(arg: string) {
 			if (!['allow', 'ignore', 'deny'].includes(arg))
-				throw new Error(`Param "--s-dotfiles" must be one of the following: "allow" | "ignore" | "deny"`)
+				throw new Error('Param "--s-dotfiles" must be one of the following: "allow" | "ignore" | "deny"')
 			return arg as 'allow' | 'ignore' | 'deny'
 		}
 	},
@@ -123,7 +123,7 @@ const argv = yargs(process.argv.splice(2))
 		default: 0,
 		coerce(arg: number) {
 			if (!(0 <= arg && arg < Infinity))
-				throw new Error(`Param "--s-max-age" must be finite positive value`)
+				throw new Error('Param "--s-max-age" must be a finite positive value')
 			return arg
 		}
 	}
@@ -140,12 +140,13 @@ interface Route {
 }
 
 interface Response extends ServerResponse {
-	locals: {[key: string]: any}
-	log: () => this
-	typeLen: (type: string, len: number) => this
-	send: (type: string, body: string | Buffer) => this
-	format: (map: {[key: string]: () => void }) => this
+	locals: { [key: string]: any }
+    log: () => this
+    typeLen: (type: string, len: number) => this
+    send: (type: string, body: string | Buffer) => this
+    format: (map: { [key: string]: () => void }) => this
 	status: (code: number) => this
+	redirect: (location: string) => this
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -264,8 +265,6 @@ const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 
 const getPath = (url: string) => url.split('?')[0]
 
-const redirect = (res: Response, loc: string) => res.writeHead(302, {'location': loc})
-
 const ETX = Buffer.of(3)
 const EOT = Buffer.of(4)
 const LOG1024 = Math.log(1024)
@@ -373,10 +372,7 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 	let [redir, newPath] = route(encodeURI(path))
 	req.url = newPath + req.url!.split('?').splice(1).join('?')
 
-	if (redir) {
-		res.log()
-		return redirect(res, req.url)
-	}
+	if (redir) return res.log().redirect(req.url)
 
 	if (newPath.includes('/.')) return fileHandler(req, res)
 
@@ -421,10 +417,10 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-		res.format({
-			html() {
-				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
-				const list = flist.map(f => {
+			return res.format({
+				html() {
+					const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
+					const list = flist.map(f => {
 					const dsu = getDataSizeUnit(f.size)
 					const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
 
@@ -432,23 +428,19 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 					`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
 					(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
 					'</tr>'
-				}).join('')
+					}).join('')
 
-				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
-			},
+					res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				},
 			json() { res.send('application/json', JSON.stringify(flist)) },
 			text() { res.send('text/plain', flist.join()) }
-		})
-
-		return
+			})
 	}
 
 	return notFoundHandler(req, res)
 }
 
-const notFoundHandler: RequestListener = (req, res) => {
-	const accept = accepts(req)
-
+const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
 	res.status(404).format({
 		html() { res.send('text/html', NOT_FOUND_PAGE) },
 		json() { res.send('application/json', '{"error":"Not Found"}') },
@@ -506,6 +498,7 @@ const ex = createServer((req, res) => {
 
 		return resp
 	}
+	resp.redirect = (location) => { return resp.writeHead(302, { location }) }
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
 	genHandler(req, resp)
