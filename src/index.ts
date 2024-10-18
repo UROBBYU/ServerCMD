@@ -141,10 +141,10 @@ interface Route {
 
 interface Response extends ServerResponse {
 	locals: { [key: string]: any }
-    log: () => this
-    typeLen: (type: string, len: number) => this
-    send: (type: string, body: string | Buffer) => this
-    format: (map: { [key: string]: () => void }) => this
+	log: () => this
+	typeLen: (type: string, len: number) => this
+	send: (type: string, body: string | Buffer) => this
+	format: (map: { [key: string]: () => void }) => this
 	status: (code: number) => this
 	redirect: (location: string) => this
 }
@@ -417,10 +417,10 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-			return res.format({
-				html() {
-					const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
-					const list = flist.map(f => {
+		return res.format({
+			html() {
+				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
+				const list = flist.map(f => {
 					const dsu = getDataSizeUnit(f.size)
 					const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
 
@@ -428,13 +428,13 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 					`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
 					(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
 					'</tr>'
-					}).join('')
+				}).join('')
 
-					res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
-				},
+				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+			},
 			json() { res.send('application/json', JSON.stringify(flist)) },
 			text() { res.send('text/plain', flist.join()) }
-			})
+		})
 	}
 
 	return notFoundHandler(req, res)
