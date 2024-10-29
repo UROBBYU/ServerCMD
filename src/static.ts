@@ -42,6 +42,7 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 	const DOTFILES = options?.dotfiles ?? 'ignore'
 	const ETAG = options?.etag ?? true
 	const EXTENSIONS = options?.extensions ?? false
+	if (EXTENSIONS && EXTENSIONS.some(v => /\/|\\/.test(v))) throw new Error('Extension path traversal is not allowed')
 	const INDEX = options?.index ?? 'index.html'
 	const MAX_AGE = options?.maxAge ?? 0
 	const REDIRECT = options?.redirect ?? true
@@ -65,7 +66,7 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 				if (!isFileFound(path)) return false
 
 				const stats = fs.statSync(path)
-				const etagValue = etag(stats)
+				const etagValue = ETAG ? etag(stats) : ''
 				if (ETAG) res.setHeader('ETag', etagValue)
 
 				res.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
