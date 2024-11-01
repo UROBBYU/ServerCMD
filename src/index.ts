@@ -394,12 +394,12 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 
 		if (fs.existsSync(faviconPath)) {
 			const stats = fs.statSync(faviconPath)
-			const etagValue = etag(stats)
-			res
-			.setHeader('ETag', etagValue)
-			.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+			const etagValue = ETAG ? etag(stats) : ''
 
-			if (req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
+			if (ETAG) res.setHeader('ETag', etagValue)
+			res.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+
+			if (ETAG && req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
 			res.typeLen('image/x-icon', stats.size).log()
 			return fs.createReadStream(faviconPath).pipe(res)
 		}
@@ -441,7 +441,9 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 }
 
 const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
-	res.status(404).format({
+	res
+	.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+	.status(404).format({
 		html() { res.send('text/html', NOT_FOUND_PAGE) },
 		json() { res.send('application/json', '{"error":"Not Found"}') },
 		text() { res.send('text/plain', 'Not Found') }
@@ -457,7 +459,9 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	res.status(500).format({
+	res
+	.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+	.status(500).format({
 		html() { res.send('text/html', ERROR_PAGE) },
 		json() { res.send('application/json', '{"error":"Internal Server Error"}') },
 		text() { res.send('text/plain', 'Internal Server Error') }

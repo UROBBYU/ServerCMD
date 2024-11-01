@@ -75,7 +75,7 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				logger(req, res)
 
-				if (req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
+				if (ETAG && req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
 
 				return !!fs.createReadStream(path).pipe(res)
 			}
