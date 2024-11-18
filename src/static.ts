@@ -1,12 +1,12 @@
 import * as fs from 'node:fs'
 import * as http from 'node:http'
 import { lookup } from './mime'
-import etag from 'etag'
 import { join } from 'node:path'
+import { Response } from '.'
 
 export type NextFunc = (err?: Error | StaticError) => void
 
-export type StaticRequestHandler = (req: http.IncomingMessage, res: http.ServerResponse, next: NextFunc) => void
+export type StaticRequestHandler = (req: http.IncomingMessage, res: Response, next: NextFunc) => void
 
 export type StaticOptions = {
 	fallthrough?: boolean
@@ -66,16 +66,12 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 				if (!isFileFound(path)) return false
 
 				const stats = fs.statSync(path)
-				const etagValue = ETAG ? etag(stats) : ''
-				if (ETAG) res.setHeader('ETag', etagValue)
 
-				res.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
-				res.setHeader('Content-Type', lookup(path))
-				res.setHeader('Content-Length', `${stats.size}`)
+				if (ETAG) res.etag(stats)
+				res.cacheControl(MAX_AGE)
+				res.typeLen(lookup(path), stats.size)
 
 				logger(req, res)
-
-				if (ETAG && req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
 
 				return !!fs.createReadStream(path).pipe(res)
 			}

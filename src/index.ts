@@ -139,7 +139,7 @@ interface Route {
 	try(path: string): string | undefined
 }
 
-interface Response extends ServerResponse {
+export interface Response extends ServerResponse {
 	locals: { [key: string]: any }
 	log: () => this
 	typeLen: (type: string, len: number) => this
@@ -147,6 +147,8 @@ interface Response extends ServerResponse {
 	format: (map: { [key: string]: () => void }) => this
 	status: (code: number) => this
 	redirect: (location: string) => this
+	etag: (stats: string | Buffer | etag.StatsLike) => this | true
+	cacheControl: (age: number) => this
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -394,12 +396,8 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 
 		if (fs.existsSync(faviconPath)) {
 			const stats = fs.statSync(faviconPath)
-			const etagValue = ETAG ? etag(stats) : ''
-
-			if (ETAG) res.setHeader('ETag', etagValue)
-			res.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
-
-			if (ETAG && req.headers['if-none-match'] === etagValue) return !!res.writeHead(304).end()
+			res.cacheControl(MAX_AGE)
+			if (ETAG) res.etag(stats)
 			res.typeLen('image/x-icon', stats.size).log()
 			return fs.createReadStream(faviconPath).pipe(res)
 		}
@@ -441,8 +439,9 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 }
 
 const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
+	if (ETAG) res.etag(NOT_FOUND_PAGE)
 	res
-	.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+	.cacheControl(MAX_AGE)
 	.status(404).format({
 		html() { res.send('text/html', NOT_FOUND_PAGE) },
 		json() { res.send('application/json', '{"error":"Not Found"}') },
@@ -459,8 +458,9 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 
 	movePendingRequests(errMsg.split('\n').length)
 
+	if (ETAG) res.etag(ERROR_PAGE)
 	res
-	.setHeader('Cache-Control', `public, max-age=${MAX_AGE}`)
+	.cacheControl(MAX_AGE)
 	.status(500).format({
 		html() { res.send('text/html', ERROR_PAGE) },
 		json() { res.send('application/json', '{"error":"Internal Server Error"}') },
@@ -502,7 +502,14 @@ const ex = createServer((req, res) => {
 
 		return resp
 	}
-	resp.redirect = (location) => { return resp.writeHead(302, { location }) }
+	resp.redirect = (location) => resp.writeHead(302, { location }) 
+	resp.cacheControl = (age) => resp.setHeader('Cache-Control', `public, max-age=${age}`)
+	resp.etag = (stats) => {
+		const etagValue = etag(stats)
+		resp.setHeader('ETag', etagValue)
+		if (req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
+		return resp
+	}
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
 	genHandler(req, resp)
