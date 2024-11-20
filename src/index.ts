@@ -148,7 +148,7 @@ export interface Response extends ServerResponse {
 	status: (code: number) => this
 	redirect: (location: string) => this
 	etag: (stats: string | Buffer | etag.StatsLike) => this | true
-	cacheControl: (age: number) => this
+	cacheControl: (maxAge: number) => this
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -502,8 +502,8 @@ const ex = createServer((req, res) => {
 
 		return resp
 	}
-	resp.redirect = (location) => resp.writeHead(302, { location }) 
-	resp.cacheControl = (age) => resp.setHeader('Cache-Control', `public, max-age=${age}`)
+	resp.redirect = (location) => resp.writeHead(302, { location })
+	resp.cacheControl = (maxAge) => resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
 	resp.etag = (stats) => {
 		const etagValue = etag(stats)
 		resp.setHeader('ETag', etagValue)

@@ -67,9 +67,10 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				const stats = fs.statSync(path)
 
+				res
+				.cacheControl(MAX_AGE)
+				.typeLen(lookup(path), stats.size)
 				if (ETAG) res.etag(stats)
-				res.cacheControl(MAX_AGE)
-				res.typeLen(lookup(path), stats.size)
 
 				logger(req, res)
 
