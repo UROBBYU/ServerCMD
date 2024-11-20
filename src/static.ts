@@ -70,9 +70,8 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 				res
 				.cacheControl(MAX_AGE)
 				.typeLen(lookup(path), stats.size)
-				if (ETAG) res.etag(stats)
-
 				logger(req, res)
+				if (ETAG && res.etag(stats).matchEtag()) return true
 
 				return !!fs.createReadStream(path).pipe(res)
 			}

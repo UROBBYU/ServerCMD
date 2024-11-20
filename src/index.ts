@@ -147,8 +147,9 @@ export interface Response extends ServerResponse {
 	format: (map: { [key: string]: () => void }) => this
 	status: (code: number) => this
 	redirect: (location: string) => this
-	etag: (stats: string | Buffer | etag.StatsLike) => this | true
+	etag: (stats: string | Buffer | etag.StatsLike) => this
 	cacheControl: (maxAge: number) => this
+	matchEtag: () => true | undefined
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -396,9 +397,11 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 
 		if (fs.existsSync(faviconPath)) {
 			const stats = fs.statSync(faviconPath)
+
 			res.cacheControl(MAX_AGE)
-			if (ETAG) res.etag(stats)
 			res.typeLen('image/x-icon', stats.size).log()
+			if (ETAG && res.etag(stats).matchEtag()) return
+
 			return fs.createReadStream(faviconPath).pipe(res)
 		}
 	}
@@ -439,7 +442,6 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 }
 
 const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
-	if (ETAG) res.etag(NOT_FOUND_PAGE)
 	res
 	.cacheControl(MAX_AGE)
 	.status(404).format({
@@ -458,7 +460,6 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	if (ETAG) res.etag(ERROR_PAGE)
 	res
 	.cacheControl(MAX_AGE)
 	.status(500).format({
@@ -507,8 +508,12 @@ const ex = createServer((req, res) => {
 	resp.etag = (stats) => {
 		const etagValue = etag(stats)
 		resp.setHeader('ETag', etagValue)
-		if (req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
 		return resp
+	}
+	resp.matchEtag = () => {
+		const etagValue = resp.getHeader('Etag')
+		if (etagValue === undefined) throw new Error("'Etag' header must be set before matching")
+		if (resp.req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
 	}
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
