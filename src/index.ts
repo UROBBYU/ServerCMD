@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
-import net = require('node:net')
-import express = require('express')
-import open = require('open')
-import fs = require('node:fs')
-import fsp = require('node:fs/promises')
-const { resolve, join } = require('node:path')
-import yargs = require('yargs/yargs')
+import { SocketAddress, createConnection } from 'node:net'
+import open from 'open'
+import * as fs from 'node:fs'
+import { resolve, join } from 'node:path'
+import yargs from 'yargs/yargs'
+import { IncomingMessage, ServerResponse, createServer } from 'node:http'
+import accepts from 'accepts'
+import serv, { NextFunc } from './static'
+import etag from 'etag'
 
 //? #################################
 //? ############# YARGS #############
@@ -18,6 +20,7 @@ const argv = yargs(process.argv.splice(2))
 .usage('$0 [options...]')
 .alias('h', 'help')
 .alias('v', 'version')
+.group('h', 'General Options:')
 .epilogue('You can add "//" to the start of URL path to force directory list instead of "index.html" fallback. Example: "http://example.com//file/path/".')
 .detectLocale(false)
 .strict(true)
@@ -25,46 +28,93 @@ const argv = yargs(process.argv.splice(2))
 .options({
 	p: {
 		alias: 'port',
+		group: 'General Options:',
 		desc: 'Server port',
 		type: 'number',
 		default: 80
 	},
 	o: {
 		alias: 'open',
+		group: 'General Options:',
 		desc: 'Open in browser',
 		type: 'boolean',
 		default: false
 	},
 	i: {
 		alias: 'init',
+		group: 'General Options:',
 		desc: 'Init serve project',
 		type: 'boolean',
 		default: false
 	},
-	x: {
-		alias: 'extensions',
-		desc: 'File extension fallbacks: If a file is not found, search for files with the specified extensions',
-		type: 'string',
-		array: true,
-		default: ['html', 'htm']
-	},
 	e: {
 		alias: 'err-page',
+		group: 'General Options:',
 		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
 		type: 'string',
 		default: './.500.html'
 	},
 	n: {
 		alias: 'not-found-page',
+		group: 'General Options:',
 		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
 		type: 'string',
 		default: './.404.html'
 	},
 	r: {
 		alias: 'routes',
+		group: 'General Options:',
 		desc: 'Path to routes map. Priority: arg > ./.routes',
 		type: 'string',
 		default: './.routes'
+	},
+	'sd': {
+		alias: 's-dotfiles',
+		group: 'Static Options:',
+		desc: 'Determines how dotfiles (files or directories that begin with a dot ".") are treated',
+		type: 'string',
+		choices: ['allow', 'ignore', 'deny'],
+		default: 'ignore',
+		coerce(arg: string) {
+			if (!['allow', 'ignore', 'deny'].includes(arg))
+				throw new Error('Param "--s-dotfiles" must be one of the following: "allow" | "ignore" | "deny"')
+			return arg as 'allow' | 'ignore' | 'deny'
+		}
+	},
+	'st': {
+		alias: 's-etag',
+		group: 'Static Options:',
+		desc: 'Etag generation. Use "--no-st" to disable it',
+		type: 'boolean',
+		default: true
+	},
+	'sx': {
+		alias: 's-extensions',
+		group: 'Static Options:',
+		desc: 'Sets file extension fallbacks: If a file is not found, search for files with the specified extensions and serve the first one found',
+		type: 'string',
+		array: true,
+		default: null,
+		defaultDescription: 'false'
+	},
+	'si': {
+		alias: 's-index',
+		group: 'Static Options:',
+		desc: 'Sends the specified directory index file. Use "--no-si" to disable directory indexing',
+		type: 'string',
+		default: 'index.html'
+	},
+	'sa': {
+		alias: 's-max-age',
+		group: 'Static Options:',
+		desc: 'Sets the max-age property of the Cache-Control header',
+		type: 'number',
+		default: 0,
+		coerce(arg: number) {
+			if (!(0 <= arg && arg < Infinity))
+				throw new Error('Param "--s-max-age" must be a finite positive value')
+			return arg
+		}
 	}
 })
 .check((argv) => {
@@ -89,6 +139,21 @@ interface Route {
 	redirect: boolean
 	try(path: string): string | undefined
 }
+
+export interface Response extends ServerResponse {
+	locals: { [key: string]: any }
+	log: () => this
+	typeLen: (type: string, len: number) => this
+	send: (type: string, body: string | Buffer) => this
+	format: (map: { [key: string]: () => void }) => this
+	status: (code: number) => this
+	redirect: (location: string) => this
+	etag: (stats: string | Buffer | etag.StatsLike) => this
+	cacheControl: (maxAge: number) => this
+	matchEtag: () => true | undefined
+}
+
+type RequestListener = (req: IncomingMessage, res: Response) => void
 
 //? #################################
 //? ######## PROCESSING ARGS ########
@@ -126,8 +191,13 @@ if (!fs.existsSync(routesPath)) {
 	console.log('not found')
 } else console.log('found')
 
+const DOTFILES = argv.sd
+const ETAG = argv.st
+const EXTENSIONS = argv.sx ?? false
+const INDEX = argv.si
+const MAX_AGE = argv.sa
+
 const OPEN_IN_BROWSER = argv.o
-const EXTENSION_FALLBACKS = argv.x
 const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
 	: `<h1>500 | Internal Server Error</h1>
 Script asset "${resolve(__dirname + '/assets/500.html')}" is missing`
@@ -187,7 +257,7 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 //? #################################
 
 const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
-	const client = net.createConnection({port}, () => {
+	const client = createConnection({port}, () => {
 		client.destroy()
 		res(false)
 	}).once('error', (err: NodeJS.ErrnoException) => {
@@ -196,6 +266,8 @@ const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 		else rej(err)
 	})
 })
+
+const getPath = (url: string) => url.split('?')[0]
 
 const ETX = Buffer.of(3)
 const EOT = Buffer.of(4)
@@ -207,7 +279,7 @@ const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
 	'td:nth-child(n+2){text-align:right;text-wrap:nowrap}</style>'
 const LIST_HEADER = '<tr><th>Name</th><th>Date modified</th><th>Size</th></tr>'
 
-const pendingRequests: Map<express.Request, [number, number]> = new Map()
+const pendingRequests: Map<IncomingMessage, [number, number]> = new Map()
 const latestLogs: number[] = []
 
 const getDataSizeUnit = (n: number) => n ? Math.trunc(Math.log(Math.abs(n)) / LOG1024) : 0
@@ -249,31 +321,21 @@ setInterval(() => {
 
 process.stdout.write('\x1b[?25l')
 
-//? #################################
-//? ############# SERVER ############
-//? #################################
-
-const exStatic = express.static('./', {
-	extensions: EXTENSION_FALLBACKS
-})
-
-const ex = express()
-
-.use((req, res, next) => { //? Logger
+const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 	const h = req.socket.remoteAddress ?? '-'
-	const r = `${req.method} ${req.path} ${req.protocol.toUpperCase()}/${req.httpVersion}`
-	const b = res.get('Content-Length') ?? '-'
-	const ref = req.get('Referer') ?? '-'
-	const ua = req.get('User-Agent') ?? '-'
+	const r = `${req.method} ${req.url} HTTP/${req.httpVersion}`
+	const b = res.getHeader('Content-Length') ?? '-'
+	const ref = req.headers['referer'] ?? '-'
+	const ua = req.headers['user-agent'] ?? '-'
 
-	const line = `[${new Date().toISOString()}] ${h} - - "${r}" ${b} "${ref}" "${ua}" ---`
+	const afterStatus = `${b} "${ref}" "${ua}"`
+	const line = `[${new Date().toISOString()}] ${h} - - "${r}" --- ${afterStatus}`
 
 	latestLogs.push(line.length)
-
 	console.log(line)
 
 	movePendingRequests(1)
-	pendingRequests.set(req, [line.length - 3, 1])
+	pendingRequests.set(req, [line.length - afterStatus.length - 4, 1])
 
 	res.once('close', () => {
 		const d = pendingRequests.get(req) as [number, number]
@@ -285,39 +347,71 @@ const ex = express()
 		latestLogs.splice(0, latestLogs.length - maxY)
 	})
 
-	next()
+	return res
+}
+
+//? #################################
+//? ############# SERVER ############
+//? #################################
+
+const exStatic = serv('./', {
+	dotfiles: DOTFILES,
+	etag: ETAG,
+	extensions: EXTENSIONS,
+	index: INDEX,
+	maxAge: MAX_AGE,
+	logger: (req, res) => reqLog(req, res as Response),
 })
 
-.use('/', (req, res, next) => { //? General handler
-	let path = decodeURI(req.path)
-	if (req.path.startsWith('//')) {
+const genHandler: RequestListener = (req, res) => { //? General handler
+	const reqPath = getPath(req.url!)
+	let path = decodeURI(reqPath)
+	if (req.method !== 'GET') return notFoundHandler(req, res)
+	if (reqPath.startsWith('//')) {
 		res.locals.fs = true
 		path = path.slice(1)
-		return next()
+		return fileHandler(req, res)
 	}
 
 	let [redir, newPath] = route(encodeURI(path))
-	req.url = newPath + req.originalUrl.split('?').splice(1).join('?')
+	req.url = newPath + req.url!.split('?').splice(1).join('?')
 
-	if (redir) return res.redirect(req.url)
+	if (redir) return res.log().redirect(req.url)
 
-	if (newPath.includes('/.')) return next()
+	if (newPath.includes('/.')) return fileHandler(req, res)
 
-	exStatic(req, res, next)
-})
+	const nx: NextFunc = (err) => {
+		if (err) {
+			res.locals.err = err
+			errorHandler(req, res)
+		}
+		else fileHandler(req, res)
+	}
 
-.use(async (req, res, next) => { //? File handler
-	const path = decodeURI(req.path)
+	exStatic(req, res, nx)
+}
+
+const fileHandler: RequestListener = async (req, res) => { //? File handler
+	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
 		const faviconPath = resolve(__dirname + '/assets/favicon.ico')
-		if (fs.existsSync(faviconPath)) return fs.createReadStream(faviconPath).pipe(res)
+
+		if (fs.existsSync(faviconPath)) {
+			const stats = fs.statSync(faviconPath)
+
+			res.cacheControl(MAX_AGE)
+			res.typeLen('image/x-icon', stats.size).log()
+			if (ETAG && res.etag(stats).matchEtag()) return
+
+			return fs.createReadStream(faviconPath).pipe(res)
+		}
 	}
 
 	const fpath = resolve(`.${decodeURI(path)}`)
 	if (path.endsWith('/') && !path.includes('/.') && fs.existsSync(fpath)) {
-		const plist = (await fsp.readdir(fpath)).filter(p => !p.startsWith('.'))
+		const plist = (await fs.promises.readdir(fpath)).filter(p => !p.startsWith('.'))
 
-		const flist = (await Promise.all(plist.map(f => fsp.stat(join(fpath, f)))))
+		const flist = (await Promise.all(plist.map(f => fs.promises.stat(join(fpath, f)))))
 			.map((f, i) => ({
 				name: plist[i] + (f.isDirectory() ? '/' : ''),
 				size: f.size,
@@ -325,7 +419,6 @@ const ex = express()
 				mtime: f.mtime,
 				toString() { return this.name }
 			}))
-
 		return res.format({
 			html() {
 				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
@@ -339,59 +432,94 @@ const ex = express()
 					'</tr>'
 				}).join('')
 
-				res.send(`<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
 			},
-
-			json() {
-				res.json(flist)
-			},
-
-			text() {
-				res.send(flist.join())
-			}
+			json() { res.send('application/json', JSON.stringify(flist)) },
+			text() { res.send('text/plain', flist.join()) }
 		})
 	}
 
-	return next()
-})
+	return notFoundHandler(req, res)
+}
 
-.use((_, res) => res.status(404).format({ //? "Not Found" handler
-		html() {
-			res.send(NOT_FOUND_PAGE)
-		},
-
-		json() {
-			res.json({ error: 'Not Found' })
-		},
-
-		text() {
-			res.send('Not Found')
-		}
+const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
+	res
+	.cacheControl(MAX_AGE)
+	.status(404).format({
+		html() { res.send('text/html', NOT_FOUND_PAGE) },
+		json() { res.send('application/json', '{"error":"Not Found"}') },
+		text() { res.send('text/plain', 'Not Found') }
 	})
-)
+}
 
-.use(((err, req, res, _) => { //? Error handler
-	const errMsg = `We got some error here [${req.method} ${decodeURI(req.originalUrl)}]:\n${err.stack}`
+const errorHandler: RequestListener = (req, res) => { //? Error handler
+	const err = res.locals.err
+	const errMsg = `We got some error here [${req.method} ${decodeURI(req.url!)}]:\n${err.stack}`
 	console.error(errMsg)
 
 	latestLogs.push(...errMsg.split('\n').map(v => v.length))
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	res.status(500).format({
-		html() {
-			res.send(ERROR_PAGE)
-		},
-
-		json() {
-			res.json({ error: 'Internal Server Error' })
-		},
-
-		text() {
-			res.send('Internal Server Error')
-		}
+	res
+	.cacheControl(MAX_AGE)
+	.status(500).format({
+		html() { res.send('text/html', ERROR_PAGE) },
+		json() { res.send('application/json', '{"error":"Internal Server Error"}') },
+		text() { res.send('text/plain', 'Internal Server Error') }
 	})
-}) as express.ErrorRequestHandler)
+}
+
+const ex = createServer((req, res) => {
+	const resp = res as Response
+	resp.locals = {}
+	resp.log = () => reqLog(req, resp)
+	resp.typeLen = (type, len) => resp
+		.setHeader('Content-Type', type)
+		.setHeader('Content-Length', len)
+	resp.send = (type, body) => resp
+		.typeLen(type, body.length)
+		.log()
+		.end(body)
+	resp.status = (code) => {
+		resp.statusCode = code
+		return resp
+	}
+	resp.format = (map) => {
+		const mimeTypes = Object.keys(map)
+		let acceptType = accepts(req).type(mimeTypes)
+
+		if (!acceptType) {
+			const body = JSON.stringify({
+				code: 'UnsupportedType',
+				message: 'Only attached content types are supported.',
+				types: mimeTypes
+			})
+
+			return resp.status(406).send('application/json', body)
+		}
+		acceptType = typeof acceptType === 'string' ? acceptType : acceptType[0]
+
+		map[acceptType]()
+
+		return resp
+	}
+	resp.redirect = (location) => resp.writeHead(302, { location })
+	resp.cacheControl = (maxAge) => resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
+	resp.etag = (stats) => {
+		const etagValue = etag(stats)
+		resp.setHeader('ETag', etagValue)
+		return resp
+	}
+	resp.matchEtag = () => {
+		const etagValue = resp.getHeader('Etag')
+		if (etagValue === undefined) throw new Error("'Etag' header must be set before matching")
+		if (resp.req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
+	}
+
+	resp.setHeader('X-Powered-By', 'urobbyu/serve')
+	genHandler(req, resp)
+})
 
 let PORT = argv.p
 isPortFree(PORT).then(isFree => {
@@ -401,7 +529,7 @@ isPortFree(PORT).then(isFree => {
 	}
 
 	const server = ex.listen(PORT, () => {
-		const port = (server.address() as net.SocketAddress).port
+		const port = (server.address() as SocketAddress).port
 		console.log(`http://localhost:${port} is listening.\nTo stop press CTRL+C...`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 
