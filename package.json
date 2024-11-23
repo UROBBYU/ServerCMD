@@ -30,7 +30,6 @@
 		"@types/express": "^4.17.21",
 		"@types/mime-db": "^1.43.5",
 		"@types/node": "^20.12.7",
-		"@types/open": "^6.2.1",
 		"@types/yargs": "^17.0.32"
 	},
 	"files": [
