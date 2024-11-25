@@ -98,7 +98,10 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 			throw new StaticError(404, 'not found')
 		} catch (err) {
 			if (err instanceof StaticError) {
-				if (FALLTHROUGH) next()
+				if (FALLTHROUGH) {
+					res.status(err.code)
+					next()
+				}
 				else next(err)
 			}
 			else throw err
