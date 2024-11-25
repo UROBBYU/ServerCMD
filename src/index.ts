@@ -21,7 +21,7 @@ const argv = yargs(process.argv.splice(2))
 .alias('h', 'help')
 .alias('v', 'version')
 .group('h', 'General Options:')
-.epilogue('You can add "//" to the start of URL path to force directory list instead of "index.html" fallback. Example: "http://example.com//file/path/".')
+.epilogue('You can add "//" to the start of URL path to force directory list instead of "--si" argument fallback. Example: "http://example.com//file/path/".')
 .detectLocale(false)
 .strict(true)
 
@@ -60,6 +60,13 @@ const argv = yargs(process.argv.splice(2))
 		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
 		type: 'string',
 		default: './.404.html'
+	},
+	f: {
+		alias: 'forbidden-page',
+		group: 'General Options:',
+		desc: 'Path to the file that server will respond with if request is forbidden. Priority: arg > ./.403.html > SCRIPT_DIR/assets/403.html',
+		type: 'string',
+		default: './.403.html'
 	},
 	r: {
 		alias: 'routes',
@@ -124,9 +131,6 @@ const argv = yargs(process.argv.splice(2))
 	if (argv.p < 0 || argv.p > 65535)
 		throw new Error('Port must be in range [0-65535]')
 
-	if (argv.x.some(v => typeof v !== 'string'))
-		throw new Error('File extensions must be strings')
-
 	return true
 })
 .parseSync()
@@ -181,7 +185,19 @@ if (!fs.existsSync(nfPath)) {
 		nfPath = ''
 		console.log('asset is missing!')
 	} else console.log('built-in')
-} else console.log(errorPath)
+} else console.log(nfPath)
+
+process.stdout.write('Forbidden page: ')
+
+let fPath = argv.f
+if (!fs.existsSync(fPath)) {
+	fPath = resolve(__dirname + '/assets/403.html')
+
+	if (!fs.existsSync(fPath)) {
+		fPath = ''
+		console.log('asset is missing!')
+	} else console.log('built-in')
+} else console.log(fPath)
 
 process.stdout.write('Routes list: ')
 
@@ -204,6 +220,9 @@ Script asset "${resolve(__dirname + '/assets/500.html')}" is missing`
 const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath)
 	: `<h1>404 | File Not Found</h1>
 Script asset "${resolve(__dirname + '/assets/404.html')}" is missing`
+const FORBIDDEN_PAGE = fPath ? fs.readFileSync(fPath)
+	: `<h1>403 | Forbidden</h1>
+Script asset "${resolve(__dirname + '/assets/403.html')}" is missing`
 const ROUTES_FILE = routesPath ? fs.readFileSync(routesPath).toString() : ''
 const ROUTES_TEMPLATE_PATH = resolve(__dirname + '/assets/routes')
 const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
@@ -212,7 +231,8 @@ const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
 
 if (argv.i) {
 	fs.writeFileSync('./.500.html', ERROR_PAGE)
-	fs.writeFileSync('./.400.html', NOT_FOUND_PAGE)
+	fs.writeFileSync('./.404.html', NOT_FOUND_PAGE)
+	fs.writeFileSync('./.403.html', FORBIDDEN_PAGE)
 	fs.writeFileSync('./.routes', ROUTES_TEMPLATE)
 
 	process.exit()
@@ -378,8 +398,6 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 
 	if (redir) return res.log().redirect(req.url)
 
-	if (newPath.includes('/.')) return fileHandler(req, res)
-
 	const nx: NextFunc = (err) => {
 		if (err) {
 			res.locals.err = err
@@ -392,6 +410,10 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 }
 
 const fileHandler: RequestListener = async (req, res) => { //? File handler
+	if (res.statusCode === 403) return forbiddenHandler(req, res)
+	if (res.statusCode === 404) res.status(200)
+	else if (res.statusCode < 200 && res.statusCode >= 300) throw new Error('Unhandled status code appeared', { cause: res.statusCode })
+
 	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
 		const faviconPath = resolve(__dirname + '/assets/favicon.ico')
@@ -452,6 +474,16 @@ const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
 	})
 }
 
+const forbiddenHandler: RequestListener = (req, res) => { //? Forbidden handler
+	res
+	.cacheControl(MAX_AGE)
+	.status(403).format({
+		html() { res.send('text/html', FORBIDDEN_PAGE) },
+		json() { res.send('application/json', '{"error":"Forbidden"}') },
+		text() { res.send('text/plain', 'Forbidden') }
+	})
+}
+
 const errorHandler: RequestListener = (req, res) => { //? Error handler
 	const err = res.locals.err
 	const errMsg = `We got some error here [${req.method} ${decodeURI(req.url!)}]:\n${err.stack}`
@@ -504,7 +536,7 @@ const ex = createServer((req, res) => {
 
 		return resp
 	}
-	resp.redirect = (location) => resp.writeHead(302, { location })
+	resp.redirect = (location) => resp.writeHead(302, { location }).end()
 	resp.cacheControl = (maxAge) => resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
 	resp.etag = (stats) => {
 		const etagValue = etag(stats)
