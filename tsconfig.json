@@ -6,6 +6,7 @@
 		"module": "NodeNext",
 		"outDir": "./",
 		"moduleResolution": "NodeNext",
+		"declaration": true,
 		"noEmitOnError": true,
 		"strict": true
 	}

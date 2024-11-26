@@ -562,7 +562,7 @@ isPortFree(PORT).then(isFree => {
 
 	const server = ex.listen(PORT, () => {
 		const port = (server.address() as SocketAddress).port
-		console.log(`http://localhost:${port} is listening.\nTo stop press CTRL+C...`)
+		console.log(`http://localhost:${port} is listening.\nTo stop press CTRL+C...\n`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 
 		process.stdin.setRawMode(true)
