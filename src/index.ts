@@ -10,9 +10,7 @@ import accepts from 'accepts'
 import serv, { NextFunc } from './static'
 import etag from 'etag'
 
-//? #################################
-//? ############# YARGS #############
-//? #################################
+//#region YARGS
 
 const argv = yargs(process.argv.splice(2))
 
@@ -135,9 +133,8 @@ const argv = yargs(process.argv.splice(2))
 })
 .parseSync()
 
-//? #################################
-//? ############# TYPES #############
-//? #################################
+//#endregion
+//#region TYPES
 
 interface Route {
 	redirect: boolean
@@ -159,9 +156,8 @@ export interface Response extends ServerResponse {
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
 
-//? #################################
-//? ######## PROCESSING ARGS ########
-//? #################################
+//#endregion
+//#region PROCESSING ARGS
 
 process.stdout.write(`Root: ${resolve('./')}\nError page: `)
 
@@ -238,9 +234,8 @@ if (argv.i) {
 	process.exit()
 }
 
-//? #################################
-//? ############# ROUTES ############
-//? #################################
+//#endregion
+//#region ROUTES
 
 const route = (path: string): [redirect: boolean, path: string] => {
 	for (const r of ROUTES) {
@@ -272,9 +267,8 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 	} as Route
 }).filter(v => v) as Route[]
 
-//? #################################
-//? ############ UTILITY ############
-//? #################################
+//#endregion
+//#region UTILITY
 
 const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 	const client = createConnection({port}, () => {
@@ -321,9 +315,8 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 	process.stdout.write(`${status}\x1b[${dy}E`)
 }
 
-//? #################################
-//? ############# LOGGER ############
-//? #################################
+//#endregion
+//#region LOGGER
 
 let lSymbol = 0
 setInterval(() => {
@@ -370,9 +363,8 @@ const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 	return res
 }
 
-//? #################################
-//? ############# SERVER ############
-//? #################################
+//#endregion
+//#region SERVER
 
 const exStatic = serv('./', {
 	dotfiles: DOTFILES,
@@ -393,7 +385,7 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 		return fileHandler(req, res)
 	}
 
-	let [redir, newPath] = route(encodeURI(path))
+	let [redir, newPath] = route(path)
 	req.url = newPath + req.url!.split('?').splice(1).join('?')
 
 	if (redir) return res.log().redirect(req.url)
@@ -454,7 +446,7 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 					'</tr>'
 				}).join('')
 
-				res.send('text/html', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				res.send('text/html; charset=utf-8', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
 			},
 			json() { res.send('application/json', JSON.stringify(flist)) },
 			text() { res.send('text/plain', flist.join()) }
@@ -571,3 +563,4 @@ isPortFree(PORT).then(isFree => {
 		})
 	})
 })
+//#endregion

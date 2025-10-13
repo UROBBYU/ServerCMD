@@ -69,7 +69,7 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				res
 				.cacheControl(MAX_AGE)
-				.typeLen(lookup(path), stats.size)
+				.typeLen(`${lookup(path)}; charset=utf-8`, stats.size)
 				logger(req, res)
 				if (ETAG && res.etag(stats).matchEtag()) return true
 
