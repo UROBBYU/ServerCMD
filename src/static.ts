@@ -3,6 +3,9 @@ import * as http from 'node:http'
 import { lookup } from './mime'
 import { join } from 'node:path'
 import { Response } from '.'
+import { Readable } from 'node:stream'
+
+type Range = [start: number, end: number]
 
 export type NextFunc = (err?: Error | StaticError) => void
 
@@ -37,6 +40,23 @@ export class StaticError extends Error {
 	}
 }
 
+const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890'
+const genID = (length: number) => Array.from({ length }, () => ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]).join('')
+
+const numLen = (n: number) => Math.floor(Math.log10(n || 1) + 1)
+
+async function* genMultipart(type: string, path: fs.PathLike, boundary: string, size: number, ranges: Range[]) {
+	const delimiter = `\r\n--${boundary}\r\n`
+	const closeDelimiter = `\r\n--${boundary}--\r\n`
+
+	for (const [start, end] of ranges) {
+		yield `${delimiter}Content-Type: ${type}\r\nContent-Range: bytes ${start}-${end}/${size}\r\n\r\n`
+		for await (const chunk of fs.createReadStream(path, { start, end }))
+			yield chunk
+	}
+	yield closeDelimiter
+}
+
 export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 	const FALLTHROUGH = options?.fallthrough ?? true
 	const DOTFILES = options?.dotfiles ?? 'ignore'
@@ -67,10 +87,52 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				const stats = fs.statSync(path)
 
+				range: if (req.headers.range && /^\s*bytes\s*=\s*\d*-\d*(\s*,\s*\d*-\d*)*\s*$/.test(req.headers.range)) {
+					const ranges = req.headers.range.split('=', 2)[1].split(',').map(range => range.split('-').map(num => parseInt(num)))
+					
+					for (const [start, end] of ranges) {
+						if (isNaN(start) && isNaN(end)) break range
+						if (start > end || end >= stats.size || start >= stats.size) {
+							res
+							.cacheControl(MAX_AGE)
+							.setHeader('Content-Range', `bytes */${stats.size}`)
+							.status(416).format({
+								html() { res.send('text/html', 'Range Not Satisfiable_PAGE') }, // TODO: Add page
+								json() { res.send('application/json', '{"error":"Range Not Satisfiable"}') },
+								text() { res.send('text/plain', 'Range Not Satisfiable') }
+							})
+							break range
+						}
+					}
+					
+					const byteRanges = ranges.map<Range>(([start, end]) => {
+						if (isNaN(start)) return [stats.size - end, stats.size - 1]
+						if (isNaN(end)) return [start, stats.size - 1]
+						return [start, end]
+					})
+
+					const boundary = genID(16)
+					const type = lookup(path)
+					const sizeLen = numLen(stats.size)
+					const bodyLen = byteRanges.reduce((t, [start, end]) => t + 66 + type.length + numLen(start) + numLen(end) + sizeLen + (end - start), 24)
+
+					res
+					.acceptRanges(true)
+					.cacheControl(MAX_AGE)
+					.typeLen(`multipart/byteranges; charset=utf-8; boundary=${boundary}`, bodyLen)
+					.log()
+
+					if (ETAG && res.etag(stats).matchEtag()) return true // TODO: If-Range
+					// TODO: Single range response
+					return !!Readable.from(genMultipart(type, path, genID(16), stats.size, byteRanges)).pipe(res.status(206))
+				}
+
 				res
+				.acceptRanges(true)
 				.cacheControl(MAX_AGE)
 				.typeLen(`${lookup(path)}; charset=utf-8`, stats.size)
 				logger(req, res)
+
 				if (ETAG && res.etag(stats).matchEtag()) return true
 
 				return !!fs.createReadStream(path).pipe(res)

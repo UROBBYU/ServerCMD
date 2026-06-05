@@ -5,7 +5,9 @@
 		"target": "ESNext",
 		"module": "NodeNext",
 		"outDir": "./",
+		"rootDir": "./src",
 		"moduleResolution": "NodeNext",
+		"types": ["node"],
 		"declaration": true,
 		"noEmitOnError": true,
 		"strict": true

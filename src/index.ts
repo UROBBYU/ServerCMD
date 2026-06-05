@@ -152,6 +152,7 @@ export interface Response extends ServerResponse {
 	etag: (stats: string | Buffer | etag.StatsLike) => this
 	cacheControl: (maxAge: number) => this
 	matchEtag: () => true | undefined
+	acceptRanges: (is: boolean) => this
 }
 
 type RequestListener = (req: IncomingMessage, res: Response) => void
@@ -540,6 +541,7 @@ const ex = createServer((req, res) => {
 		if (etagValue === undefined) throw new Error("'Etag' header must be set before matching")
 		if (resp.req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
 	}
+	resp.acceptRanges = (is) => resp.setHeader('Accept-Ranges', is ? 'bytes' : 'none')
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
 	genHandler(req, resp)
