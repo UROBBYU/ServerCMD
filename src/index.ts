@@ -316,7 +316,7 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 	process.stdout.write(`${status}\x1b[${dy}E`)
 }
 
-const etagRegex = /^\s*"[^"]+"(\s*,\s*"[^"]+")*\s*$/
+const etagRegex = /^\s*(W\/)?"[^"]+"(\s*,\s*(W\/)?"[^"]+")*\s*$/
 const gmtRegex = /^\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT\s*$/
 
 const ifMatch = (header: string, etag: string) => header.trim() === '*' || etagRegex.test(header) && header.includes(etag)
@@ -329,7 +329,7 @@ export class CustomResponse extends ServerResponse {
 	readonly locals = new Map()
 
 	#etag(stats: string | Buffer | etag.StatsLike): string {
-		return this.getHeaderOrInsert('ETag', etag(stats, { weak: false })) as string
+		return this.getHeaderOrInsert('ETag', etag(stats)) as string
 	}
 	#lastModified(stats: fs.Stats): number {
 		return Date.parse(this.getHeaderOrInsert('Last-Modified', stats.mtime.toUTCString()) as string)
