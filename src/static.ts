@@ -14,12 +14,10 @@ export type StaticRequestHandler = (req: http.IncomingMessage, res: Response, ne
 export type StaticOptions = {
 	fallthrough?: boolean
 	dotfiles?: 'allow' | 'deny' | 'ignore'
-	etag?: boolean
 	extensions?: false | string[]
 	index?: false | string
 	maxAge?: number
 	redirect?: boolean
-	logger?: http.RequestListener
 }
 
 export class StaticError extends Error {
@@ -60,13 +58,11 @@ async function* genMultipart(type: string, path: fs.PathLike, boundary: string, 
 export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 	const FALLTHROUGH = options?.fallthrough ?? true
 	const DOTFILES = options?.dotfiles ?? 'ignore'
-	const ETAG = options?.etag ?? true
 	const EXTENSIONS = options?.extensions ?? false
 	if (EXTENSIONS && EXTENSIONS.some(v => /\/|\\/.test(v))) throw new Error('Extension path traversal is not allowed')
 	const INDEX = options?.index ?? 'index.html'
 	const MAX_AGE = options?.maxAge ?? 0
 	const REDIRECT = options?.redirect ?? true
-	const logger = options?.logger ?? (() => {})
 
 	return (req, res, next) => {
 		try {
@@ -86,6 +82,8 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 				if (!isFileFound(path)) return false
 
 				const stats = fs.statSync(path)
+				const type = lookup(path)
+				
 
 				range: if (req.headers.range && /^\s*bytes\s*=\s*\d*-\d*(\s*,\s*\d*-\d*)*\s*$/.test(req.headers.range)) {
 					const ranges = req.headers.range.split('=', 2)[1].split(',').map(range => range.split('-').map(num => parseInt(num)))
@@ -112,28 +110,37 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 					})
 
 					const boundary = genID(16)
-					const type = lookup(path)
 					const sizeLen = numLen(stats.size)
 					const bodyLen = byteRanges.reduce((t, [start, end]) => t + 66 + type.length + numLen(start) + numLen(end) + sizeLen + (end - start), 24)
 
 					res
 					.acceptRanges(true)
 					.cacheControl(MAX_AGE)
-					.typeLen(`multipart/byteranges; charset=utf-8; boundary=${boundary}`, bodyLen)
+					.typeLen(`multipart/byteranges; boundary=${boundary}`, bodyLen)
 					.log()
 
-					if (ETAG && res.etag(stats).matchEtag()) return true // TODO: If-Range
-					// TODO: Single range response
-					return !!Readable.from(genMultipart(type, path, genID(16), stats.size, byteRanges)).pipe(res.status(206))
+					if (res.checkConditionals(stats)) return true
+					if (res.checkRange(stats)) return !!fs.createReadStream(path).pipe(res.typeLen(type, stats.size).status(200))
+
+					res.status(206)
+
+					if (byteRanges.length === 1) {
+						const [start, end] = byteRanges[0]
+						res
+						.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`)
+						.typeLen(type, stats.size)
+						return !!fs.createReadStream(path, { start, end }).pipe(res)
+					}
+					return !!Readable.from(genMultipart(type, path, genID(16), stats.size, byteRanges)).pipe(res)
 				}
 
 				res
 				.acceptRanges(true)
 				.cacheControl(MAX_AGE)
-				.typeLen(`${lookup(path)}; charset=utf-8`, stats.size)
-				logger(req, res)
+				.typeLen(type, stats.size)
+				.log()
 
-				if (ETAG && res.etag(stats).matchEtag()) return true
+				if (res.checkConditionals(stats)) return true
 
 				return !!fs.createReadStream(path).pipe(res)
 			}

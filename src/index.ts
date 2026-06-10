@@ -89,7 +89,14 @@ const argv = yargs(process.argv.splice(2))
 	'st': {
 		alias: 's-etag',
 		group: 'Static Options:',
-		desc: 'Etag generation. Use "--no-st" to disable it',
+		desc: 'ETag generation. Use "--no-st" to disable it',
+		type: 'boolean',
+		default: true
+	},
+	'sl': {
+		alias: 's-last-modified',
+		group: 'Static Options:',
+		desc: 'Last-Modified generation. Use "--no-sl" to disable it',
 		type: 'boolean',
 		default: true
 	},
@@ -150,8 +157,10 @@ export interface Response extends ServerResponse {
 	status: (code: number) => this
 	redirect: (location: string) => this
 	etag: (stats: string | Buffer | etag.StatsLike) => this
+	lastModified: (date: number | string | Date) => this
 	cacheControl: (maxAge: number) => this
-	matchEtag: () => true | undefined
+	checkConditionals: (stats: fs.Stats) => true | undefined
+	checkRange: (stats: fs.Stats) => boolean
 	acceptRanges: (is: boolean) => this
 }
 
@@ -206,6 +215,7 @@ if (!fs.existsSync(routesPath)) {
 
 const DOTFILES = argv.sd
 const ETAG = argv.st
+const LAST_MODIFIED = argv.sl
 const EXTENSIONS = argv.sx ?? false
 const INDEX = argv.si
 const MAX_AGE = argv.sa
@@ -316,6 +326,15 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 	process.stdout.write(`${status}\x1b[${dy}E`)
 }
 
+const etagRegex = /^\s*"[^"]+"(\s*,\s*"[^"]+")*\s*$/
+const gmtRegex = /^\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT\s*$/
+
+const ifMatch = (header: string, etag: string) => header.trim() === '*' || etagRegex.test(header) && header.includes(etag)
+const ifNoneMatch = (header: string, etag: string) => etagRegex.test(header) && !header.includes(etag)
+const ifModifiedSince = (header: string, modified: number) => gmtRegex.test(header) && Date.parse(header) < modified
+const ifUnmodifiedSince = (header: string, modified: number) => gmtRegex.test(header) && Date.parse(header) >= modified
+const ifRange = (header: string, etag: string, modified: number) => header.trim() === etag || ifUnmodifiedSince(header, modified)
+
 //#endregion
 //#region LOGGER
 
@@ -369,11 +388,9 @@ const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 
 const exStatic = serv('./', {
 	dotfiles: DOTFILES,
-	etag: ETAG,
 	extensions: EXTENSIONS,
 	index: INDEX,
 	maxAge: MAX_AGE,
-	logger: (req, res) => reqLog(req, res as Response),
 })
 
 const genHandler: RequestListener = (req, res) => { //? General handler
@@ -416,7 +433,7 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 
 			res.cacheControl(MAX_AGE)
 			res.typeLen('image/x-icon', stats.size).log()
-			if (ETAG && res.etag(stats).matchEtag()) return
+			if (res.checkConditionals(stats)) return
 
 			return fs.createReadStream(faviconPath).pipe(res)
 		}
@@ -500,7 +517,7 @@ const ex = createServer((req, res) => {
 	resp.locals = {}
 	resp.log = () => reqLog(req, resp)
 	resp.typeLen = (type, len) => resp
-		.setHeader('Content-Type', type)
+		.setHeader('Content-Type', `${type}; charset=utf-8`)
 		.setHeader('Content-Length', len)
 	resp.send = (type, body) => resp
 		.typeLen(type, body.length)
@@ -531,15 +548,37 @@ const ex = createServer((req, res) => {
 	}
 	resp.redirect = (location) => resp.writeHead(302, { location }).end()
 	resp.cacheControl = (maxAge) => resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
-	resp.etag = (stats) => {
-		const etagValue = etag(stats)
-		resp.setHeader('ETag', etagValue)
-		return resp
+	resp.etag = (stats) => resp.setHeader('ETag', etag(stats, { weak: false }))
+	resp.lastModified = (date) => resp.setHeader('Last-Modified', new Date(date).toUTCString())
+	resp.checkConditionals = (stats) => {
+		const hMatch = resp.req.headers['if-match']
+		const hNoneMatch = resp.req.headers['if-none-match']
+		const hModifiedSince = resp.req.headers['if-modified-since']
+		const hUnmodifiedSince = resp.req.headers['if-unmodified-since']
+		// TODO: ETag blocks Last-Modified
+		if (ETAG) {
+			const etagValue = (resp.getHeader('ETag') ?? resp.etag(stats).getHeader('ETag')) as string
+
+			if (hMatch && !ifMatch(hMatch, etagValue)) return !!resp.writeHead(412).end()
+			if (hNoneMatch && !ifNoneMatch(hNoneMatch, etagValue)) return !!resp.writeHead(304).end()
+		}
+
+		if (LAST_MODIFIED) {
+			const lastModValue = Date.parse((resp.getHeader('Last-Modified') ?? resp.lastModified(stats.mtime).getHeader('Last-Modified')) as string)
+
+			if (!hNoneMatch && hModifiedSince && !ifModifiedSince(hModifiedSince, lastModValue)) return !!resp.writeHead(304).end()
+			if (hUnmodifiedSince && !ifUnmodifiedSince(hUnmodifiedSince, lastModValue)) return !!resp.writeHead(412).end()
+		}
 	}
-	resp.matchEtag = () => {
-		const etagValue = resp.getHeader('Etag')
-		if (etagValue === undefined) throw new Error("'Etag' header must be set before matching")
-		if (resp.req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
+	resp.checkRange = (stats) => {
+		if (!ETAG || !LAST_MODIFIED) return false
+
+		const etagValue = (resp.getHeader('ETag') ?? resp.etag(stats).getHeader('ETag')) as string
+		const lastModValue = Date.parse((resp.getHeader('Last-Modified') ?? resp.lastModified(stats.mtime).getHeader('Last-Modified')) as string)
+
+		const hRange = resp.req.headers['if-range']?.toString()
+
+		return !!(hRange && resp.req.headers['range'] && !ifRange(hRange, etagValue, lastModValue))
 	}
 	resp.acceptRanges = (is) => resp.setHeader('Accept-Ranges', is ? 'bytes' : 'none')
 
