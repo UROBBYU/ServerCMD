@@ -2,14 +2,14 @@ import * as fs from 'node:fs'
 import * as http from 'node:http'
 import { lookup } from './mime'
 import { join } from 'node:path'
-import { Response } from '.'
+import { type CustomResponse } from '.'
 import { Readable } from 'node:stream'
 
 type Range = [start: number, end: number]
 
 export type NextFunc = (err?: Error | StaticError) => void
 
-export type StaticRequestHandler = (req: http.IncomingMessage, res: Response, next: NextFunc) => void
+export type StaticRequestHandler = (req: http.IncomingMessage, res: CustomResponse, next: NextFunc) => void
 
 export type StaticOptions = {
 	fallthrough?: boolean
@@ -23,8 +23,8 @@ export type StaticOptions = {
 export class StaticError extends Error {
 	code: number
 
-	constructor(code: number, msg: string) {
-		super(msg)
+	constructor(code: number) {
+		super(http.STATUS_CODES[code] || 'Unknown Error')
 
 		this.code = code
 		this.stack = ''
@@ -72,8 +72,8 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 			const isDir = (path: string) => fs.statSync(join(root, path)).isDirectory()
 
 			if (path.includes('/.')) {
-				if (DOTFILES == 'deny') throw new StaticError(403, 'denied')
-				if (DOTFILES == 'ignore') throw new StaticError(404, 'not found')
+				if (DOTFILES == 'deny') throw new StaticError(403)
+				if (DOTFILES == 'ignore') throw new StaticError(404)
 			}
 
 			const resp = (path: string): boolean => {
@@ -83,26 +83,23 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				const stats = fs.statSync(path)
 				const type = lookup(path)
-				
+
+				res
+				.acceptRanges(true)
+				.cacheControl(MAX_AGE)
 
 				range: if (req.headers.range && /^\s*bytes\s*=\s*\d*-\d*(\s*,\s*\d*-\d*)*\s*$/.test(req.headers.range)) {
 					const ranges = req.headers.range.split('=', 2)[1].split(',').map(range => range.split('-').map(num => parseInt(num)))
-					
+
 					for (const [start, end] of ranges) {
 						if (isNaN(start) && isNaN(end)) break range
 						if (start > end || end >= stats.size || start >= stats.size) {
-							res
-							.cacheControl(MAX_AGE)
-							.setHeader('Content-Range', `bytes */${stats.size}`)
-							.status(416).format({
-								html() { res.send('text/html', 'Range Not Satisfiable_PAGE') }, // TODO: Add page
-								json() { res.send('application/json', '{"error":"Range Not Satisfiable"}') },
-								text() { res.send('text/plain', 'Range Not Satisfiable') }
-							})
-							break range
+							res.setHeader('Content-Range', `bytes */${stats.size}`)
+
+							throw new StaticError(416)
 						}
 					}
-					
+
 					const byteRanges = ranges.map<Range>(([start, end]) => {
 						if (isNaN(start)) return [stats.size - end, stats.size - 1]
 						if (isNaN(end)) return [start, stats.size - 1]
@@ -113,36 +110,34 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 					const sizeLen = numLen(stats.size)
 					const bodyLen = byteRanges.reduce((t, [start, end]) => t + 66 + type.length + numLen(start) + numLen(end) + sizeLen + (end - start), 24)
 
-					res
-					.acceptRanges(true)
-					.cacheControl(MAX_AGE)
-					.typeLen(`multipart/byteranges; boundary=${boundary}`, bodyLen)
-					.log()
-
 					if (res.checkConditionals(stats)) return true
-					if (res.checkRange(stats)) return !!fs.createReadStream(path).pipe(res.typeLen(type, stats.size).status(200))
+					if (res.checkRange(stats)) {
+						fs.createReadStream(path).pipe(res.typeLen(type, stats.size).status(200))
+						return true
+					}
 
-					res.status(206)
+					res.typeLen(`multipart/byteranges; boundary=${boundary}`, bodyLen).status(206)
 
 					if (byteRanges.length === 1) {
 						const [start, end] = byteRanges[0]
-						res
-						.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`)
-						.typeLen(type, stats.size)
-						return !!fs.createReadStream(path, { start, end }).pipe(res)
-					}
-					return !!Readable.from(genMultipart(type, path, genID(16), stats.size, byteRanges)).pipe(res)
-				}
 
-				res
-				.acceptRanges(true)
-				.cacheControl(MAX_AGE)
-				.typeLen(type, stats.size)
-				.log()
+						fs.createReadStream(path, { start, end }).pipe(res
+						.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`)
+						.typeLen(type, end - start + 1))
+
+						return true
+					}
+
+					Readable.from(genMultipart(type, path, genID(16), stats.size, byteRanges)).pipe(res)
+
+					return true
+				}
 
 				if (res.checkConditionals(stats)) return true
 
-				return !!fs.createReadStream(path).pipe(res)
+				fs.createReadStream(path).pipe(res.typeLen(type, stats.size))
+
+				return true
 			}
 
 			if (isFileFound(path)) {
@@ -164,7 +159,7 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 				}
 			}
 
-			throw new StaticError(404, 'not found')
+			throw new StaticError(404)
 		} catch (err) {
 			if (err instanceof StaticError) {
 				if (FALLTHROUGH) {
