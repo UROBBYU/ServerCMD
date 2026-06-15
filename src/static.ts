@@ -112,7 +112,11 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 					if (res.checkConditionals(stats)) return true
 					if (res.checkRange(stats)) {
-						fs.createReadStream(path).pipe(res.typeLen(type, stats.size).status(200))
+						res.typeLen(type, stats.size).status(200)
+
+						if (req.method === 'HEAD') return Boolean(res.end())
+
+						fs.createReadStream(path).pipe(res)
 						return true
 					}
 
@@ -121,12 +125,18 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 					if (byteRanges.length === 1) {
 						const [start, end] = byteRanges[0]
 
-						fs.createReadStream(path, { start, end }).pipe(res
+						res
 						.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`)
-						.typeLen(type, end - start + 1))
+						.typeLen(type, end - start + 1)
+
+						if (req.method === 'HEAD') return Boolean(res.end())
+
+						fs.createReadStream(path, { start, end }).pipe(res)
 
 						return true
 					}
+
+					if (req.method === 'HEAD') return Boolean(res.end())
 
 					Readable.from(genMultipart(type, path, genID(16), stats.size, byteRanges)).pipe(res)
 
@@ -135,7 +145,11 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				if (res.checkConditionals(stats)) return true
 
-				fs.createReadStream(path).pipe(res.typeLen(type, stats.size))
+				res.typeLen(type, stats.size)
+
+				if (req.method === 'HEAD') return Boolean(res.end())
+
+				fs.createReadStream(path).pipe(res)
 
 				return true
 			}

@@ -9,6 +9,7 @@ import { type IncomingMessage, STATUS_CODES, ServerResponse, createServer } from
 import accepts from 'accepts'
 import serv, { type NextFunc } from './static'
 import etag from 'etag'
+import mus from 'mustache'
 
 //#region YARGS
 
@@ -45,24 +46,31 @@ const argv = yargs(process.argv.splice(2))
 		type: 'boolean',
 		default: false
 	},
+	t: {
+		alias: 'template-page',
+		group: 'General Options:',
+		desc: 'Path to the file used as the status page template. Priority: specific page > arg > ./.status.html > SCRIPT_DIR/assets/status.html',
+		type: 'string',
+		default: './.status.html'
+	},
 	e: {
 		alias: 'err-page',
 		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
+		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html',
 		type: 'string',
 		default: './.500.html'
 	},
 	n: {
 		alias: 'not-found-page',
 		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
+		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html',
 		type: 'string',
 		default: './.404.html'
 	},
 	f: {
 		alias: 'forbidden-page',
 		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if request is forbidden. Priority: arg > ./.403.html > SCRIPT_DIR/assets/403.html',
+		desc: 'Path to the file that server will respond with if request is forbidden. Priority: arg > ./.403.html',
 		type: 'string',
 		default: './.403.html'
 	},
@@ -153,40 +161,40 @@ type RequestListener = (req: IncomingMessage, res: CustomResponse) => void
 //#endregion
 //#region PROCESSING ARGS
 
-process.stdout.write(`Root: ${resolve('./')}\nError page: `)
+process.stdout.write(`Root: ${resolve('./')}\nStatus template page: `)
+
+let tPath = argv.t
+if (!fs.existsSync(tPath)) {
+	tPath = resolve(__dirname + '/assets/status.html')
+
+	if (!fs.existsSync(tPath)) {
+		tPath = ''
+		console.log('asset is missing!')
+	} else console.log('built-in')
+} else console.log(tPath)
+
+process.stdout.write('Error page: ')
 
 let errorPath = argv.e
 if (!fs.existsSync(errorPath)) {
-	errorPath = resolve(__dirname + '/assets/500.html')
-
-	if (!fs.existsSync(errorPath)) {
-		errorPath = ''
-		console.log('asset is missing!')
-	} else console.log('built-in')
+	errorPath = ''
+	console.log('from template')
 } else console.log(errorPath)
 
 process.stdout.write('Not Found page: ')
 
 let nfPath = argv.n
 if (!fs.existsSync(nfPath)) {
-	nfPath = resolve(__dirname + '/assets/404.html')
-
-	if (!fs.existsSync(nfPath)) {
-		nfPath = ''
-		console.log('asset is missing!')
-	} else console.log('built-in')
+	nfPath = ''
+	console.log('from template')
 } else console.log(nfPath)
 
 process.stdout.write('Forbidden page: ')
 
 let fPath = argv.f
 if (!fs.existsSync(fPath)) {
-	fPath = resolve(__dirname + '/assets/403.html')
-
-	if (!fs.existsSync(fPath)) {
-		fPath = ''
-		console.log('asset is missing!')
-	} else console.log('built-in')
+	fPath = ''
+	console.log('from template')
 } else console.log(fPath)
 
 process.stdout.write('Routes list: ')
@@ -205,15 +213,12 @@ const INDEX = argv.si
 const MAX_AGE = argv.sa
 
 const OPEN_IN_BROWSER = argv.o
-const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
-	: `<h1>500 | Internal Server Error</h1>
-Script asset "${resolve(__dirname + '/assets/500.html')}" is missing`
-const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath)
-	: `<h1>404 | File Not Found</h1>
-Script asset "${resolve(__dirname + '/assets/404.html')}" is missing`
-const FORBIDDEN_PAGE = fPath ? fs.readFileSync(fPath)
-	: `<h1>403 | Forbidden</h1>
-Script asset "${resolve(__dirname + '/assets/403.html')}" is missing`
+const TEMPLATE_PAGE = tPath ? fs.readFileSync(tPath, { encoding: 'utf-8' })
+	: `<h1>{{code}} | {{desc}}</h1>
+Script asset "${resolve(__dirname + '/assets/status.html')}" is missing`
+const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath) : undefined
+const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath) : undefined
+const FORBIDDEN_PAGE = fPath ? fs.readFileSync(fPath) : undefined
 const ROUTES_FILE = routesPath ? fs.readFileSync(routesPath).toString() : ''
 const ROUTES_TEMPLATE_PATH = resolve(__dirname + '/assets/routes')
 const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
@@ -221,9 +226,6 @@ const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
 	: `# Script asset "${resolve(__dirname + '/assets/routes')}" is missing`
 
 if (argv.i) {
-	fs.writeFileSync('./.500.html', ERROR_PAGE)
-	fs.writeFileSync('./.404.html', NOT_FOUND_PAGE)
-	fs.writeFileSync('./.403.html', FORBIDDEN_PAGE)
 	fs.writeFileSync('./.routes', ROUTES_TEMPLATE)
 
 	process.exit()
@@ -264,12 +266,31 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 
 //#endregion
 //#region UTILITY
+const MIME_MAP = {
+	html: 'text/html',
+	json: 'application/json',
+	text: 'text/plain'
+}
+
+mus.parse(TEMPLATE_PAGE)
+
+const genStatusPage = (code: number, options: { font?: number, width?: number } = {}) => mus.render(TEMPLATE_PAGE, {
+	font: 10,
+	width: 70,
+	...options,
+	code,
+	desc: STATUS_CODES[code],
+	color: code < 500 ? '#f6b411' : '#e64227'
+})
 
 const STATUS_PAGES: Record<number, string | Buffer> = {
-	403: FORBIDDEN_PAGE,
-	404: NOT_FOUND_PAGE,
-	500: ERROR_PAGE
-} // TODO: Handle 405, 416 and 412
+	403: FORBIDDEN_PAGE ?? genStatusPage(403, { font: 8.9 }),
+	404: NOT_FOUND_PAGE ?? genStatusPage(404, { width: 52 }),
+	405: NOT_FOUND_PAGE ?? genStatusPage(405),
+	412: NOT_FOUND_PAGE ?? genStatusPage(412, { font: 7.6 }),
+	416: NOT_FOUND_PAGE ?? genStatusPage(416),
+	500: ERROR_PAGE ?? genStatusPage(500),
+}
 
 const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 	const client = createConnection({port}, () => {
@@ -351,7 +372,7 @@ export class CustomResponse extends ServerResponse {
 		.setHeader('Content-Length', len)
 	}
 	send(type: string, body: string | Buffer): true {
-		this.typeLen(type, body.length).end(body)
+		this.typeLen(type, body.length).end(this.req.method === 'HEAD' ? undefined : body)
 		return true
 	}
 	status(code: number): this {
@@ -378,12 +399,12 @@ export class CustomResponse extends ServerResponse {
 		acceptType = typeof acceptType === 'string' ? acceptType : acceptType[0]
 		const content = map[acceptType]
 
-		return this.send(acceptType, content instanceof Function ? content() : content)
+		return this.send(MIME_MAP[acceptType as 'html'] ?? acceptType, content instanceof Function ? content() : content)
 	}
 	sendError(code: number, msg = STATUS_CODES[code] ?? 'Unknown Error'): true {
 		return this.cacheControl(MAX_AGE)
 		.status(code).format({
-			html: STATUS_PAGES[code] ?? ERROR_PAGE, // TODO: handle missing status page
+			html: STATUS_PAGES[code] ?? genStatusPage(code),
 			json: `{"error":"${msg}"}`,
 			text: msg
 		})
@@ -491,7 +512,7 @@ const exStatic = serv('./', {
 const genHandler: RequestListener = (req, res) => { //? General handler
 	const reqPath = getPath(req.url!)
 	let path = decodeURI(reqPath)
-	if (req.method !== 'GET') return res.sendError(405)
+	if (!['GET', 'HEAD'].includes(req.method!)) return res.sendError(405)
 	if (reqPath.startsWith('//')) {
 		res.locals.set('fs', true)
 		path = path.slice(1)
@@ -518,7 +539,7 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 const fileHandler: RequestListener = async (req, res) => { //? File handler
 	if (res.statusCode === 404) res.status(200)
 	else if (res.statusCode >= 500) return errorHandler(req, res)
-	else if (res.statusCode < 200 && res.statusCode >= 300) return res.sendError(res.statusCode)
+	else if (res.statusCode < 200 || res.statusCode >= 300) return res.sendError(res.statusCode)
 
 	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
@@ -532,6 +553,8 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 			.typeLen('image/x-icon', stats.size)
 
 			if (res.checkConditionals(stats)) return
+
+			if (req.method === 'HEAD') return res.end()
 
 			return fs.createReadStream(faviconPath).pipe(res)
 		}
