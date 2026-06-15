@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
-import { SocketAddress, createConnection } from 'node:net'
+import { type SocketAddress, createConnection } from 'node:net'
 import open from 'open'
 import * as fs from 'node:fs'
 import { resolve, join } from 'node:path'
 import yargs from 'yargs/yargs'
-import { IncomingMessage, ServerResponse, createServer } from 'node:http'
+import { type IncomingMessage, STATUS_CODES, ServerResponse, createServer } from 'node:http'
 import accepts from 'accepts'
-import serv, { NextFunc } from './static'
+import serv, { type NextFunc } from './static'
 import etag from 'etag'
+import mus from 'mustache'
 
 //#region YARGS
 
@@ -45,24 +46,31 @@ const argv = yargs(process.argv.splice(2))
 		type: 'boolean',
 		default: false
 	},
+	t: {
+		alias: 'template-page',
+		group: 'General Options:',
+		desc: 'Path to the file used as the status page template. Priority: specific page > arg > ./.status.html > SCRIPT_DIR/assets/status.html',
+		type: 'string',
+		default: './.status.html'
+	},
 	e: {
 		alias: 'err-page',
 		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
+		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html',
 		type: 'string',
 		default: './.500.html'
 	},
 	n: {
 		alias: 'not-found-page',
 		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
+		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html',
 		type: 'string',
 		default: './.404.html'
 	},
 	f: {
 		alias: 'forbidden-page',
 		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if request is forbidden. Priority: arg > ./.403.html > SCRIPT_DIR/assets/403.html',
+		desc: 'Path to the file that server will respond with if request is forbidden. Priority: arg > ./.403.html',
 		type: 'string',
 		default: './.403.html'
 	},
@@ -89,7 +97,14 @@ const argv = yargs(process.argv.splice(2))
 	'st': {
 		alias: 's-etag',
 		group: 'Static Options:',
-		desc: 'Etag generation. Use "--no-st" to disable it',
+		desc: 'ETag generation. Use "--no-st" to disable it',
+		type: 'boolean',
+		default: true
+	},
+	'sl': {
+		alias: 's-last-modified',
+		group: 'Static Options:',
+		desc: 'Last-Modified generation. Use "--no-sl" to disable it',
 		type: 'boolean',
 		default: true
 	},
@@ -141,58 +156,45 @@ interface Route {
 	try(path: string): string | undefined
 }
 
-export interface Response extends ServerResponse {
-	locals: { [key: string]: any }
-	log: () => this
-	typeLen: (type: string, len: number) => this
-	send: (type: string, body: string | Buffer) => this
-	format: (map: { [key: string]: () => void }) => this
-	status: (code: number) => this
-	redirect: (location: string) => this
-	etag: (stats: string | Buffer | etag.StatsLike) => this
-	cacheControl: (maxAge: number) => this
-	matchEtag: () => true | undefined
-}
-
-type RequestListener = (req: IncomingMessage, res: Response) => void
+type RequestListener = (req: IncomingMessage, res: CustomResponse) => void
 
 //#endregion
 //#region PROCESSING ARGS
 
-process.stdout.write(`Root: ${resolve('./')}\nError page: `)
+process.stdout.write(`Root: ${resolve('./')}\nStatus template page: `)
+
+let tPath = argv.t
+if (!fs.existsSync(tPath)) {
+	tPath = resolve(__dirname + '/assets/status.html')
+
+	if (!fs.existsSync(tPath)) {
+		tPath = ''
+		console.log('asset is missing!')
+	} else console.log('built-in')
+} else console.log(tPath)
+
+process.stdout.write('Error page: ')
 
 let errorPath = argv.e
 if (!fs.existsSync(errorPath)) {
-	errorPath = resolve(__dirname + '/assets/500.html')
-
-	if (!fs.existsSync(errorPath)) {
-		errorPath = ''
-		console.log('asset is missing!')
-	} else console.log('built-in')
+	errorPath = ''
+	console.log('from template')
 } else console.log(errorPath)
 
 process.stdout.write('Not Found page: ')
 
 let nfPath = argv.n
 if (!fs.existsSync(nfPath)) {
-	nfPath = resolve(__dirname + '/assets/404.html')
-
-	if (!fs.existsSync(nfPath)) {
-		nfPath = ''
-		console.log('asset is missing!')
-	} else console.log('built-in')
+	nfPath = ''
+	console.log('from template')
 } else console.log(nfPath)
 
 process.stdout.write('Forbidden page: ')
 
 let fPath = argv.f
 if (!fs.existsSync(fPath)) {
-	fPath = resolve(__dirname + '/assets/403.html')
-
-	if (!fs.existsSync(fPath)) {
-		fPath = ''
-		console.log('asset is missing!')
-	} else console.log('built-in')
+	fPath = ''
+	console.log('from template')
 } else console.log(fPath)
 
 process.stdout.write('Routes list: ')
@@ -205,20 +207,18 @@ if (!fs.existsSync(routesPath)) {
 
 const DOTFILES = argv.sd
 const ETAG = argv.st
+const LAST_MODIFIED = argv.sl
 const EXTENSIONS = argv.sx ?? false
 const INDEX = argv.si
 const MAX_AGE = argv.sa
 
 const OPEN_IN_BROWSER = argv.o
-const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath)
-	: `<h1>500 | Internal Server Error</h1>
-Script asset "${resolve(__dirname + '/assets/500.html')}" is missing`
-const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath)
-	: `<h1>404 | File Not Found</h1>
-Script asset "${resolve(__dirname + '/assets/404.html')}" is missing`
-const FORBIDDEN_PAGE = fPath ? fs.readFileSync(fPath)
-	: `<h1>403 | Forbidden</h1>
-Script asset "${resolve(__dirname + '/assets/403.html')}" is missing`
+const TEMPLATE_PAGE = tPath ? fs.readFileSync(tPath, { encoding: 'utf-8' })
+	: `<h1>{{code}} | {{desc}}</h1>
+Script asset "${resolve(__dirname + '/assets/status.html')}" is missing`
+const ERROR_PAGE = errorPath ? fs.readFileSync(errorPath) : undefined
+const NOT_FOUND_PAGE = nfPath ? fs.readFileSync(nfPath) : undefined
+const FORBIDDEN_PAGE = fPath ? fs.readFileSync(fPath) : undefined
 const ROUTES_FILE = routesPath ? fs.readFileSync(routesPath).toString() : ''
 const ROUTES_TEMPLATE_PATH = resolve(__dirname + '/assets/routes')
 const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
@@ -226,9 +226,6 @@ const ROUTES_TEMPLATE = fs.existsSync(ROUTES_TEMPLATE_PATH)
 	: `# Script asset "${resolve(__dirname + '/assets/routes')}" is missing`
 
 if (argv.i) {
-	fs.writeFileSync('./.500.html', ERROR_PAGE)
-	fs.writeFileSync('./.404.html', NOT_FOUND_PAGE)
-	fs.writeFileSync('./.403.html', FORBIDDEN_PAGE)
 	fs.writeFileSync('./.routes', ROUTES_TEMPLATE)
 
 	process.exit()
@@ -269,6 +266,31 @@ const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 
 //#endregion
 //#region UTILITY
+const MIME_MAP = {
+	html: 'text/html',
+	json: 'application/json',
+	text: 'text/plain'
+}
+
+mus.parse(TEMPLATE_PAGE)
+
+const genStatusPage = (code: number, options: { font?: number, width?: number } = {}) => mus.render(TEMPLATE_PAGE, {
+	font: 10,
+	width: 70,
+	...options,
+	code,
+	desc: STATUS_CODES[code],
+	color: code < 500 ? '#f6b411' : '#e64227'
+})
+
+const STATUS_PAGES: Record<number, string | Buffer> = {
+	403: FORBIDDEN_PAGE ?? genStatusPage(403, { font: 8.9 }),
+	404: NOT_FOUND_PAGE ?? genStatusPage(404, { width: 52 }),
+	405: NOT_FOUND_PAGE ?? genStatusPage(405),
+	412: NOT_FOUND_PAGE ?? genStatusPage(412, { font: 7.6 }),
+	416: NOT_FOUND_PAGE ?? genStatusPage(416),
+	500: ERROR_PAGE ?? genStatusPage(500),
+}
 
 const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 	const client = createConnection({port}, () => {
@@ -315,6 +337,120 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 	process.stdout.write(`${status}\x1b[${dy}E`)
 }
 
+const etagRegex = /^\s*(W\/)?"[^"]+"(\s*,\s*(W\/)?"[^"]+")*\s*$/
+const gmtRegex = /^\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT\s*$/
+
+const ifMatch = (header: string, etag: string) => header.trim() === '*' || etagRegex.test(header) && header.includes(etag)
+const ifNoneMatch = (header: string, etag: string) => etagRegex.test(header) && !header.includes(etag)
+const ifModifiedSince = (header: string, modified: number) => gmtRegex.test(header) && Date.parse(header) < modified
+const ifUnmodifiedSince = (header: string, modified: number) => gmtRegex.test(header) && Date.parse(header) >= modified
+const ifRange = (header: string, etag: string, modified: number) => header.trim() === etag || ifUnmodifiedSince(header, modified)
+
+export class CustomResponse extends ServerResponse {
+	readonly locals = new Map()
+
+	#etag(stats: string | Buffer | etag.StatsLike): string {
+		return this.getHeaderOrInsert('ETag', etag(stats)) as string
+	}
+	#lastModified(stats: fs.Stats): number {
+		return Date.parse(this.getHeaderOrInsert('Last-Modified', stats.mtime.toUTCString()) as string)
+	}
+
+	constructor(...args: ConstructorParameters<typeof ServerResponse>) {
+		super(...args)
+
+		this.once('finish', this.log)
+	}
+
+	log(): this { return reqLog(this.req, this) }
+	getHeaderOrInsert(name: string, value: string | number | string[]): string | number | string[] {
+		return this.getHeader(name) ?? (this.setHeader(name, value) && value)
+	}
+	typeLen(type: string, len: number): this {
+		return this
+		.setHeader('Content-Type', `${type}; charset=utf-8`)
+		.setHeader('Content-Length', len)
+	}
+	send(type: string, body: string | Buffer): true {
+		this.typeLen(type, body.length).end(this.req.method === 'HEAD' ? undefined : body)
+		return true
+	}
+	status(code: number): this {
+		this.statusCode = code
+		return this
+	}
+	sendStatus(code: number): true {
+		this.status(code).end()
+		return true
+	}
+	format(map: { [key: string]: string | Buffer | (() => string | Buffer) }): true {
+		const mimeTypes = Object.keys(map)
+		let acceptType = accepts(this.req).type(mimeTypes)
+
+		if (!acceptType) {
+			const body = JSON.stringify({
+				code: 'UnsupportedType',
+				message: 'Only attached content types are supported.',
+				types: mimeTypes
+			})
+
+			return this.status(406).send('application/json', body)
+		}
+		acceptType = typeof acceptType === 'string' ? acceptType : acceptType[0]
+		const content = map[acceptType]
+
+		return this.send(MIME_MAP[acceptType as 'html'] ?? acceptType, content instanceof Function ? content() : content)
+	}
+	sendError(code: number, msg = STATUS_CODES[code] ?? 'Unknown Error'): true {
+		return this.cacheControl(MAX_AGE)
+		.status(code).format({
+			html: STATUS_PAGES[code] ?? genStatusPage(code),
+			json: `{"error":"${msg}"}`,
+			text: msg
+		})
+	}
+	redirect(location: string): this {
+		return this.writeHead(302, { location }).end()
+	}
+	cacheControl(maxAge: number): this {
+		return this.setHeader('Cache-Control', `public, max-age=${maxAge}`)
+	}
+	checkConditionals(stats: fs.Stats): boolean {
+		const hMatch = this.req.headers['if-match']
+		const hNoneMatch = this.req.headers['if-none-match']
+		const hModifiedSince = this.req.headers['if-modified-since']
+		const hUnmodifiedSince = this.req.headers['if-unmodified-since']
+
+		const etagValue = ETAG && this.#etag(stats)
+		const lastModValue = LAST_MODIFIED && this.#lastModified(stats)
+
+		if (etagValue) {
+			if (hMatch && !ifMatch(hMatch, etagValue)) return this.sendError(412)
+			if (hNoneMatch && !ifNoneMatch(hNoneMatch, etagValue)) return this.sendStatus(304)
+		}
+
+		if (lastModValue) {
+			if (!hNoneMatch && hModifiedSince && !ifModifiedSince(hModifiedSince, lastModValue)) return this.sendStatus(304)
+			if (hUnmodifiedSince && !ifUnmodifiedSince(hUnmodifiedSince, lastModValue)) return this.sendError(412)
+		}
+
+		return false
+	}
+	checkRange(stats: fs.Stats): boolean {
+		if (!ETAG || !LAST_MODIFIED) return false
+
+		const etagValue = this.#etag(stats)
+		const lastModValue = this.#lastModified(stats)
+
+		const hRange = this.req.headers['if-range']?.toString()
+
+		return Boolean(hRange && this.req.headers['range'] && !ifRange(hRange, etagValue, lastModValue))
+	}
+	acceptRanges(is: boolean): this {
+		return this.setHeader('Accept-Ranges', is ? 'bytes' : 'none')
+	}
+}
+
 //#endregion
 //#region LOGGER
 
@@ -334,7 +470,7 @@ setInterval(() => {
 
 process.stdout.write('\x1b[?25l')
 
-const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
+const reqLog = <Req extends IncomingMessage, Res extends ServerResponse>(req: Req, res: Res) => { //? Logger
 	const h = req.socket.remoteAddress ?? '-'
 	const r = `${req.method} ${req.url} HTTP/${req.httpVersion}`
 	const b = res.getHeader('Content-Length') ?? '-'
@@ -368,19 +504,17 @@ const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 
 const exStatic = serv('./', {
 	dotfiles: DOTFILES,
-	etag: ETAG,
 	extensions: EXTENSIONS,
 	index: INDEX,
 	maxAge: MAX_AGE,
-	logger: (req, res) => reqLog(req, res as Response),
 })
 
 const genHandler: RequestListener = (req, res) => { //? General handler
 	const reqPath = getPath(req.url!)
 	let path = decodeURI(reqPath)
-	if (req.method !== 'GET') return notFoundHandler(req, res)
+	if (!['GET', 'HEAD'].includes(req.method!)) return res.sendError(405)
 	if (reqPath.startsWith('//')) {
-		res.locals.fs = true
+		res.locals.set('fs', true)
 		path = path.slice(1)
 		return fileHandler(req, res)
 	}
@@ -388,11 +522,12 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 	let [redir, newPath] = route(path)
 	req.url = newPath + req.url!.split('?').splice(1).join('?')
 
-	if (redir) return res.log().redirect(req.url)
+	if (redir) return res.redirect(req.url)
 
 	const nx: NextFunc = (err) => {
 		if (err) {
-			res.locals.err = err
+			res.locals.set('err', err)
+
 			errorHandler(req, res)
 		}
 		else fileHandler(req, res)
@@ -402,9 +537,9 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 }
 
 const fileHandler: RequestListener = async (req, res) => { //? File handler
-	if (res.statusCode === 403) return forbiddenHandler(req, res)
 	if (res.statusCode === 404) res.status(200)
-	else if (res.statusCode < 200 && res.statusCode >= 300) throw new Error('Unhandled status code appeared', { cause: res.statusCode })
+	else if (res.statusCode >= 500) return errorHandler(req, res)
+	else if (res.statusCode < 200 || res.statusCode >= 300) return res.sendError(res.statusCode)
 
 	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
@@ -413,9 +548,13 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 		if (fs.existsSync(faviconPath)) {
 			const stats = fs.statSync(faviconPath)
 
-			res.cacheControl(MAX_AGE)
-			res.typeLen('image/x-icon', stats.size).log()
-			if (ETAG && res.etag(stats).matchEtag()) return
+			res
+			.cacheControl(MAX_AGE)
+			.typeLen('image/x-icon', stats.size)
+
+			if (res.checkConditionals(stats)) return
+
+			if (req.method === 'HEAD') return res.end()
 
 			return fs.createReadStream(faviconPath).pipe(res)
 		}
@@ -446,38 +585,18 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 					'</tr>'
 				}).join('')
 
-				res.send('text/html; charset=utf-8', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				return `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`
 			},
-			json() { res.send('application/json', JSON.stringify(flist)) },
-			text() { res.send('text/plain', flist.join()) }
+			json: () => JSON.stringify(flist),
+			text: () => flist.join()
 		})
 	}
 
-	return notFoundHandler(req, res)
-}
-
-const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
-	res
-	.cacheControl(MAX_AGE)
-	.status(404).format({
-		html() { res.send('text/html', NOT_FOUND_PAGE) },
-		json() { res.send('application/json', '{"error":"Not Found"}') },
-		text() { res.send('text/plain', 'Not Found') }
-	})
-}
-
-const forbiddenHandler: RequestListener = (req, res) => { //? Forbidden handler
-	res
-	.cacheControl(MAX_AGE)
-	.status(403).format({
-		html() { res.send('text/html', FORBIDDEN_PAGE) },
-		json() { res.send('application/json', '{"error":"Forbidden"}') },
-		text() { res.send('text/plain', 'Forbidden') }
-	})
+	return res.sendError(404)
 }
 
 const errorHandler: RequestListener = (req, res) => { //? Error handler
-	const err = res.locals.err
+	const err = res.locals.get('err') as Error
 	const errMsg = `We got some error here [${req.method} ${decodeURI(req.url!)}]:\n${err.stack}`
 	console.error(errMsg)
 
@@ -485,64 +604,12 @@ const errorHandler: RequestListener = (req, res) => { //? Error handler
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	res
-	.cacheControl(MAX_AGE)
-	.status(500).format({
-		html() { res.send('text/html', ERROR_PAGE) },
-		json() { res.send('application/json', '{"error":"Internal Server Error"}') },
-		text() { res.send('text/plain', 'Internal Server Error') }
-	})
+	res.sendError(500)
 }
 
-const ex = createServer((req, res) => {
-	const resp = res as Response
-	resp.locals = {}
-	resp.log = () => reqLog(req, resp)
-	resp.typeLen = (type, len) => resp
-		.setHeader('Content-Type', type)
-		.setHeader('Content-Length', len)
-	resp.send = (type, body) => resp
-		.typeLen(type, body.length)
-		.log()
-		.end(body)
-	resp.status = (code) => {
-		resp.statusCode = code
-		return resp
-	}
-	resp.format = (map) => {
-		const mimeTypes = Object.keys(map)
-		let acceptType = accepts(req).type(mimeTypes)
-
-		if (!acceptType) {
-			const body = JSON.stringify({
-				code: 'UnsupportedType',
-				message: 'Only attached content types are supported.',
-				types: mimeTypes
-			})
-
-			return resp.status(406).send('application/json', body)
-		}
-		acceptType = typeof acceptType === 'string' ? acceptType : acceptType[0]
-
-		map[acceptType]()
-
-		return resp
-	}
-	resp.redirect = (location) => resp.writeHead(302, { location }).end()
-	resp.cacheControl = (maxAge) => resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
-	resp.etag = (stats) => {
-		const etagValue = etag(stats)
-		resp.setHeader('ETag', etagValue)
-		return resp
-	}
-	resp.matchEtag = () => {
-		const etagValue = resp.getHeader('Etag')
-		if (etagValue === undefined) throw new Error("'Etag' header must be set before matching")
-		if (resp.req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
-	}
-
-	resp.setHeader('X-Powered-By', 'urobbyu/serve')
-	genHandler(req, resp)
+const ex = createServer({ ServerResponse: CustomResponse }, (req, res) => {
+	res.setHeader('X-Powered-By', 'urobbyu/serve')
+	genHandler(req, res)
 })
 
 let PORT = argv.p

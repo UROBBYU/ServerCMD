@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>500 | Internal Server Error</title>
+    <title>{{code}} | {{desc}}</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap');
         body {
@@ -12,21 +12,21 @@
             filter: blur(0.4px);
         }
         div {
-            font-size: 10vmin;
+            font-size: {{font}}vmin;
             font-family: 'M PLUS Rounded 1c', sans-serif;
-            width: 70vmin;
+            width: {{width}}vmin;
             text-align: center;
             margin: 50vh 50vw;
-            transform: translate(-50%, -50%);
+			transform: translate(-50%, -50%);
             color: #fff;
             text-shadow: 5px 4px 3px #000;
         }
         span {
-            color: #e64227;
+            color: {{color}};
         }
     </style>
 </head>
 <body>
-    <div><span>500</span> | Internal Server Error</div>
+    <div><span>{{code}}</span> | {{desc}}</div>
 </body>
 </html>
