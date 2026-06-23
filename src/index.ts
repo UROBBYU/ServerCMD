@@ -332,8 +332,6 @@ setInterval(() => {
 	lSymbol = (lSymbol + 1) % LSYMS.length
 }, 4e2)
 
-process.stdout.write('\x1b[?25l')
-
 const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 	const h = req.socket.remoteAddress ?? '-'
 	const r = `${req.method} ${req.url} HTTP/${req.httpVersion}`
@@ -558,8 +556,13 @@ isPortFree(PORT).then(isFree => {
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 
 		process.stdin.setRawMode(true)
+		process.stdout.write('\x1b[?25l')
 		process.stdin.on('data', data => {
 			if (data.equals(ETX) || data.equals(EOT)) process.exit()
+		})
+
+		process.on('exit', () => {
+			process.stdout.write('\x1b[?25h')
 		})
 	})
 })
