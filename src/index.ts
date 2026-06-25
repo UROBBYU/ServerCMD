@@ -10,6 +10,7 @@ import accepts from 'accepts'
 import serv, { NextFunc, type StaticError } from './static'
 import etag from 'etag'
 import assert from 'node:assert/strict'
+import { TUI } from '@urobbyu/tui'
 
 //#region YARGS
 
@@ -152,6 +153,9 @@ disable directory indexing',
 	.parseSync()
 
 //#endregion
+//#region TUI
+const tui = new TUI(process.stdin, process.stdout)
+//#endregion
 //#region TYPES
 
 interface Route {
@@ -177,7 +181,7 @@ type RequestListener = (req: IncomingMessage, res: Response) => void
 //#endregion
 //#region PROCESSING ARGS
 
-process.stdout.write(`Root: ${resolve('./')}\nError page: `)
+tui.write(`Root: ${resolve('./')}\nError page: `)
 
 let errorPath = argv.e
 if (!fs.existsSync(errorPath)) {
@@ -189,7 +193,7 @@ if (!fs.existsSync(errorPath)) {
 	} else console.log('built-in')
 } else console.log(errorPath)
 
-process.stdout.write('Not Found page: ')
+tui.write('Not Found page: ')
 
 let nfPath = argv.n
 if (!fs.existsSync(nfPath)) {
@@ -201,7 +205,7 @@ if (!fs.existsSync(nfPath)) {
 	} else console.log('built-in')
 } else console.log(nfPath)
 
-process.stdout.write('Forbidden page: ')
+tui.write('Forbidden page: ')
 
 let fPath = argv.f
 if (!fs.existsSync(fPath)) {
@@ -213,7 +217,7 @@ if (!fs.existsSync(fPath)) {
 	} else console.log('built-in')
 } else console.log(fPath)
 
-process.stdout.write('Routes list: ')
+tui.write('Routes list: ')
 
 let routesPath = argv.r
 if (!fs.existsSync(routesPath)) {
@@ -311,8 +315,6 @@ const isPortFree = (port: number) => new Promise<boolean>((res, rej) => {
 
 const getPath = (url: string) => url.split('?')[0]
 
-const ETX = Buffer.of(3)
-const EOT = Buffer.of(4)
 const LOG1024 = Math.log(1024)
 const LSYMS = ['_/‾', '/‾\\', '‾\\_', '\\_/']
 const LIST_STYLE = '<style>table{border-spacing:2em .5em}\
@@ -334,7 +336,7 @@ const movePendingRequests = (n: number) => pendingRequests.forEach(
 const updateStatus = (status: string, [col, row]: [number, number]) => {
 	let dy = 0
 	const latLogLen = latestLogs.length
-	const termWidth = process.stdout.columns
+	const termWidth = tui.width
 	const indexLine = latLogLen - row
 	for (let i = latLogLen - 1; i >= indexLine; i--) {
 		dy += Math.ceil(latestLogs[i] / termWidth)
@@ -344,8 +346,7 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 
 	const dx = col % termWidth
 
-	process.stdout.moveCursor(dx, -dy)
-	process.stdout.write(`${status}\x1b[${dy}E`)
+	tui.move(dx, -dy).write(status).cursorNextLine(dy)
 }
 
 //#endregion
@@ -353,14 +354,17 @@ const updateStatus = (status: string, [col, row]: [number, number]) => {
 
 let lSymbol = 0
 setInterval(() => {
-	process.stdout.write('\x1b7')
+	tui.saveCursor()
 	pendingRequests.forEach((d, r) => {
 		if (r.closed) pendingRequests.delete(r)
 
 		updateStatus(LSYMS[lSymbol], d)
 	})
 
-	process.stdout.write(`\x1b8\x1b[1K\r${pendingRequests.size} request${pendingRequests.size === 1 ? '' : 's'} pending\r`) // \x1b[K
+	const { size } = pendingRequests
+	const plural = size === 1 ? '' : 's'
+	tui.restoreCursor().eraseLeft()
+		.write(`\r${size} request${plural} pending\r`)
 
 	lSymbol = (lSymbol + 1) % LSYMS.length
 }, 4e2)
@@ -609,15 +613,9 @@ Switching to random free port.`)
 To stop press CTRL+C...\n`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 
-		process.stdin.setRawMode(true)
-		process.stdout.write('\x1b[?25l')
-		process.stdin.on('data', data => {
-			if (data.equals(ETX) || data.equals(EOT)) process.exit()
-		})
+		tui.init(false)//.cursorVisible(false)
 
-		process.on('exit', () => {
-			process.stdout.write('\x1b[?25h')
-		})
+		process.on('exit', () => tui.eraseLine().cursorVisible())
 	})
 })
 //#endregion

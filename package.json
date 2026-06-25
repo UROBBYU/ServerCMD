@@ -16,6 +16,7 @@
 		"serve": "index.js"
 	},
 	"dependencies": {
+		"@urobbyu/tui": "https://github.com/UROBBYU/TUI/releases/download/v0.3.3/package.tgz",
 		"accepts": "^1.3.8",
 		"etag": "^1.8.1",
 		"mime-db": "^1.54.0",
