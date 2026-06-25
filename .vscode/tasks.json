@@ -28,12 +28,8 @@
 			"dependsOn": "compile ts",
 			"dependsOrder": "sequence",
 			"type": "shell",
-			"command": "Write-Host",
-			"args": [
-				"-ForegroundColor",
-				"Green",
-				"TypeScript compiled successfully."
-			],
+			"command": "echo",
+			"args": ["\\033[32mTypeScript compiled successfully.\\033[0m"],
 			"presentation": {
 				"showReuseMessage": false,
 				"echo": false,
