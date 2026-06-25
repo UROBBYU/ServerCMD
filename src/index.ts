@@ -7,131 +7,149 @@ import { resolve, join } from 'node:path'
 import yargs from 'yargs/yargs'
 import { IncomingMessage, ServerResponse, createServer } from 'node:http'
 import accepts from 'accepts'
-import serv, { NextFunc } from './static'
+import serv, { NextFunc, type StaticError } from './static'
 import etag from 'etag'
+import assert from 'node:assert/strict'
 
 //#region YARGS
 
 const argv = yargs(process.argv.splice(2))
 
-.scriptName('serve')
-.usage('$0 [options...]')
-.alias('h', 'help')
-.alias('v', 'version')
-.group('h', 'General Options:')
-.epilogue('You can add "//" to the start of URL path to force directory list instead of "--si" argument fallback. Example: "http://example.com//file/path/".')
-.detectLocale(false)
-.strict(true)
+	.scriptName('serve')
+	.usage('$0 [options...]')
+	.alias('h', 'help')
+	.alias('v', 'version')
+	.group('h', 'General Options:')
+	.epilogue('You can add "//" to the start of URL path to force directory \
+list instead of "--si" argument fallback. \
+Example: "http://example.com//file/path/".')
+	.detectLocale(false)
+	.strict(true)
 
-.options({
-	p: {
-		alias: 'port',
-		group: 'General Options:',
-		desc: 'Server port',
-		type: 'number',
-		default: 80
-	},
-	o: {
-		alias: 'open',
-		group: 'General Options:',
-		desc: 'Open in browser',
-		type: 'boolean',
-		default: false
-	},
-	i: {
-		alias: 'init',
-		group: 'General Options:',
-		desc: 'Init serve project',
-		type: 'boolean',
-		default: false
-	},
-	e: {
-		alias: 'err-page',
-		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if an Internal Server Error occurs. Priority: arg > ./.500.html > SCRIPT_DIR/assets/500.html',
-		type: 'string',
-		default: './.500.html'
-	},
-	n: {
-		alias: 'not-found-page',
-		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if requested path is not found. Priority: arg > ./.404.html > SCRIPT_DIR/assets/404.html',
-		type: 'string',
-		default: './.404.html'
-	},
-	f: {
-		alias: 'forbidden-page',
-		group: 'General Options:',
-		desc: 'Path to the file that server will respond with if request is forbidden. Priority: arg > ./.403.html > SCRIPT_DIR/assets/403.html',
-		type: 'string',
-		default: './.403.html'
-	},
-	r: {
-		alias: 'routes',
-		group: 'General Options:',
-		desc: 'Path to routes map. Priority: arg > ./.routes',
-		type: 'string',
-		default: './.routes'
-	},
-	'sd': {
-		alias: 's-dotfiles',
-		group: 'Static Options:',
-		desc: 'Determines how dotfiles (files or directories that begin with a dot ".") are treated',
-		type: 'string',
-		choices: ['allow', 'ignore', 'deny'],
-		default: 'ignore',
-		coerce(arg: string) {
-			if (!['allow', 'ignore', 'deny'].includes(arg))
-				throw new Error('Param "--s-dotfiles" must be one of the following: "allow" | "ignore" | "deny"')
-			return arg as 'allow' | 'ignore' | 'deny'
+	.options({
+		p: {
+			alias: 'port',
+			group: 'General Options:',
+			desc: 'Server port',
+			type: 'number',
+			default: 80
+		},
+		o: {
+			alias: 'open',
+			group: 'General Options:',
+			desc: 'Open in browser',
+			type: 'boolean',
+			default: false
+		},
+		i: {
+			alias: 'init',
+			group: 'General Options:',
+			desc: 'Init serve project',
+			type: 'boolean',
+			default: false
+		},
+		e: {
+			alias: 'err-page',
+			group: 'General Options:',
+			desc: 'Path to the file that server will respond with if an \
+Internal Server Error occurs. Priority: arg > ./.500.html > \
+SCRIPT_DIR/assets/500.html',
+			type: 'string',
+			default: './.500.html'
+		},
+		n: {
+			alias: 'not-found-page',
+			group: 'General Options:',
+			desc: 'Path to the file that server will respond with if \
+requested path is not found. Priority: arg > ./.404.html > \
+SCRIPT_DIR/assets/404.html',
+			type: 'string',
+			default: './.404.html'
+		},
+		f: {
+			alias: 'forbidden-page',
+			group: 'General Options:',
+			desc: 'Path to the file that server will respond with if request \
+is forbidden. Priority: arg > ./.403.html > SCRIPT_DIR/assets/403.html',
+			type: 'string',
+			default: './.403.html'
+		},
+		r: {
+			alias: 'routes',
+			group: 'General Options:',
+			desc: 'Path to routes map. Priority: arg > ./.routes',
+			type: 'string',
+			default: './.routes'
+		},
+		'sd': {
+			alias: 's-dotfiles',
+			group: 'Static Options:',
+			desc: 'Determines how dotfiles (files or directories that begin \
+with a dot ".") are treated',
+			type: 'string',
+			choices: ['allow', 'ignore', 'deny'],
+			default: 'ignore',
+			coerce(arg: string) {
+				assert.match(
+					arg,
+					/^(allow|ignore|deny)$/,
+					'Param "--s-dotfiles" must be one of the following: \
+"allow" | "ignore" | "deny"'
+				)
+				return arg as 'allow' | 'ignore' | 'deny'
+			}
+		},
+		'st': {
+			alias: 's-etag',
+			group: 'Static Options:',
+			desc: 'Etag generation. Use "--no-st" to disable it',
+			type: 'boolean',
+			default: true
+		},
+		'sx': {
+			alias: 's-extensions',
+			group: 'Static Options:',
+			desc: 'Sets file extension fallbacks: If a file is not found, \
+search for files with the specified extensions and serve the first one found',
+			type: 'string',
+			array: true,
+			default: null,
+			defaultDescription: 'false'
+		},
+		'si': {
+			alias: 's-index',
+			group: 'Static Options:',
+			desc: 'Sends the specified directory index file. Use "--no-si" to \
+disable directory indexing',
+			type: 'string',
+			default: 'index.html'
+		},
+		'sa': {
+			alias: 's-max-age',
+			group: 'Static Options:',
+			desc: 'Sets the max-age property of the Cache-Control header',
+			type: 'number',
+			default: 0,
+			coerce(arg: number) {
+				assert(
+					0 <= arg && arg < Infinity,
+					'Param "--s-max-age" must be a finite positive value'
+				)
+				return arg
+			}
 		}
-	},
-	'st': {
-		alias: 's-etag',
-		group: 'Static Options:',
-		desc: 'Etag generation. Use "--no-st" to disable it',
-		type: 'boolean',
-		default: true
-	},
-	'sx': {
-		alias: 's-extensions',
-		group: 'Static Options:',
-		desc: 'Sets file extension fallbacks: If a file is not found, search for files with the specified extensions and serve the first one found',
-		type: 'string',
-		array: true,
-		default: null,
-		defaultDescription: 'false'
-	},
-	'si': {
-		alias: 's-index',
-		group: 'Static Options:',
-		desc: 'Sends the specified directory index file. Use "--no-si" to disable directory indexing',
-		type: 'string',
-		default: 'index.html'
-	},
-	'sa': {
-		alias: 's-max-age',
-		group: 'Static Options:',
-		desc: 'Sets the max-age property of the Cache-Control header',
-		type: 'number',
-		default: 0,
-		coerce(arg: number) {
-			if (!(0 <= arg && arg < Infinity))
-				throw new Error('Param "--s-max-age" must be a finite positive value')
-			return arg
-		}
-	}
-})
-.check((argv) => {
-	if (!Number.isInteger(argv.p))
-		throw new Error('Port must be an integer')
+	})
+	.check((argv) => {
+		assert(Number.isInteger(argv.p), 'Port must be an integer')
 
-	if (argv.p < 0 || argv.p > 65535)
-		throw new Error('Port must be in range [0-65535]')
+		assert(
+			0 <= argv.p && argv.p <= 65535,
+			'Port must be in range [0-65535]'
+		)
 
-	return true
-})
-.parseSync()
+		return true
+	})
+	.parseSync()
 
 //#endregion
 //#region TYPES
@@ -142,7 +160,7 @@ interface Route {
 }
 
 export interface Response extends ServerResponse {
-	locals: { [key: string]: any }
+	locals: { [key: string]: unknown }
 	log: () => this
 	typeLen: (type: string, len: number) => this
 	send: (type: string, body: string | Buffer) => this
@@ -246,24 +264,34 @@ const route = (path: string): [redirect: boolean, path: string] => {
 	return [false, path]
 }
 
+const ROUTE_REG = /^(?<q>&?&?)\s*(?<req>\/\S*?)\s*(?<op>[:=>])\s*(?<res>\S*?)$/
+
 const ROUTES = ROUTES_FILE.split('\n').map((line, i) => {
 	line = line.split('#')[0]
 	line = line.trim()
 	if (!line) return null
 
-	function err() { throw new Error(`Malformed route at line ${i + 1}:\n${line}`) }
+	const err = `Malformed route at line ${i + 1}:\n${line}`
 
-	const s = /^(?<q>&?&?)\s*(?<req>\/\S*?)\s*(?<op>[:=>])\s*(?<res>\S*?)$/.exec(line)
-	if (!s) err()
-	const g = s!.groups!
-	if (g.q && !g.req.endsWith('/')) err()
+	const s = ROUTE_REG.exec(line)
+	assert(s, err)
+	const g = s.groups!
+	assert(!g.q || g.req.endsWith('/'), err)
+
+	const tryReg = new RegExp(
+		`^${g.req.slice(0, -1)}`,
+		g.q === '&' ? 'i' : undefined
+	)
+	const tryWithReg = (p: string) => tryReg.test(p)
+		? p.replace(tryReg, g.res)
+		: undefined
+	const tryWithStr = (p: string) => p.startsWith(g.req + (g.f ?? ''))
+		? p.replace(g.req, g.res)
+		: undefined
 
 	return {
 		redirect: g.op === '>',
-		try: g.q
-		? (p, r = new RegExp(`${g.req.startsWith('^') ? '' : '^'}${g.req.slice(0, -1)}`, g.q === '&' ? 'i' : undefined)) =>
-			r.test(p) ? p.replace(r, g.res) : undefined
-		: p => p.startsWith(g.req + (g.f ?? '')) ? p.replace(g.req, g.res) : undefined
+		try: g.q ? tryWithReg : tryWithStr
 	} as Route
 }).filter(v => v) as Route[]
 
@@ -287,17 +315,22 @@ const ETX = Buffer.of(3)
 const EOT = Buffer.of(4)
 const LOG1024 = Math.log(1024)
 const LSYMS = ['_/‾', '/‾\\', '‾\\_', '\\_/']
-const LIST_STYLE = '<style>table{border-spacing:2em .5em}' +
-	'body{font-family:monospace;font-size:1.5em;color:#fff;background-color:#222231;white-space-collapse:preserve}' +
-	'a{font-weight:bold;color:#54cbc0}a:not(:hover){text-decoration:none}' +
-	'td:nth-child(n+2){text-align:right;text-wrap:nowrap}</style>'
+const LIST_STYLE = '<style>table{border-spacing:2em .5em}\
+body{font-family:monospace;font-size:1.5em;color:#fff\
+;background-color:#222231;white-space-collapse:preserve}\
+a{font-weight:bold;color:#54cbc0}a:not(:hover){text-decoration:none}\
+td:nth-child(n+2){text-align:right;text-wrap:nowrap}</style>'
 const LIST_HEADER = '<tr><th>Name</th><th>Date modified</th><th>Size</th></tr>'
 
 const pendingRequests: Map<IncomingMessage, [number, number]> = new Map()
 const latestLogs: number[] = []
 
-const getDataSizeUnit = (n: number) => n ? Math.trunc(Math.log(Math.abs(n)) / LOG1024) : 0
-const movePendingRequests = (n: number) => pendingRequests.forEach((v, k) => pendingRequests.set(k, [v[0], v[1] + n]))
+const getDataSizeUnit = (n: number) => n
+	? Math.trunc(Math.log(Math.abs(n)) / LOG1024)
+	: 0
+const movePendingRequests = (n: number) => pendingRequests.forEach(
+	(v, k) => pendingRequests.set(k, [v[0], v[1] + n])
+)
 const updateStatus = (status: string, [col, row]: [number, number]) => {
 	let dy = 0
 	const latLogLen = latestLogs.length
@@ -340,7 +373,8 @@ const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 	const ua = req.headers['user-agent'] ?? '-'
 
 	const afterStatus = `${b} "${ref}" "${ua}"`
-	const line = `[${new Date().toISOString()}] ${h} - - "${r}" --- ${afterStatus}`
+	const time = new Date().toISOString()
+	const line = `[${time}] ${h} - - "${r}" --- ${afterStatus}`
 
 	latestLogs.push(line.length)
 	console.log(line)
@@ -354,7 +388,8 @@ const reqLog = (req: IncomingMessage, res: Response) => { //? Logger
 
 		updateStatus(`${res.statusCode}`, d)
 
-		const maxY = [...pendingRequests.values()].reduce((t, [_, y]) => Math.max(y, t), 0)
+		const maxY = [...pendingRequests.values()]
+			.reduce((t, [, y]) => Math.max(y, t), 0)
 		latestLogs.splice(0, latestLogs.length - maxY)
 	})
 
@@ -383,7 +418,7 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 		return fileHandler(req, res)
 	}
 
-	let [redir, newPath] = route(path)
+	const [redir, newPath] = route(path)
 	req.url = newPath + req.url!.split('?').splice(1).join('?')
 
 	if (redir) return res.log().redirect(req.url)
@@ -402,7 +437,10 @@ const genHandler: RequestListener = (req, res) => { //? General handler
 const fileHandler: RequestListener = async (req, res) => { //? File handler
 	if (res.statusCode === 403) return forbiddenHandler(req, res)
 	if (res.statusCode === 404) res.status(200)
-	else if (res.statusCode < 200 && res.statusCode >= 300) throw new Error('Unhandled status code appeared', { cause: res.statusCode })
+	else assert(
+		200 <= res.statusCode && res.statusCode < 300,
+		`Unhandled status code appeared: ${res.statusCode}`
+	)
 
 	const path = decodeURI(getPath(req.url!))
 	if (path === '/favicon.ico') {
@@ -421,9 +459,13 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 
 	const fpath = resolve(`.${decodeURI(path)}`)
 	if (path.endsWith('/') && !path.includes('/.') && fs.existsSync(fpath)) {
-		const plist = (await fs.promises.readdir(fpath)).filter(p => !p.startsWith('.'))
+		const plist = (await fs.promises.readdir(fpath))
+			.filter(p => !p.startsWith('.'))
 
-		const flist = (await Promise.all(plist.map(f => fs.promises.stat(join(fpath, f)))))
+		const stats = await Promise.all(
+			plist.map(f => fs.promises.stat(join(fpath, f)))
+		)
+		const flist = stats
 			.map((f, i) => ({
 				name: plist[i] + (f.isDirectory() ? '/' : ''),
 				size: f.size,
@@ -433,18 +475,25 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 			}))
 		return res.format({
 			html() {
-				const up = path === '/' ? '' : `<tr><td><a href="..">..</a></td></tr>`
+				const up = path === '/'
+					? ''
+					: `<tr><td><a href="..">..</a></td></tr>`
 				const list = flist.map(f => {
 					const dsu = getDataSizeUnit(f.size)
 					const dsc = ' KMGTPEZY'[dsu] + (dsu ? 'i' : ' ') + 'B'
+					const size = Math.trunc(f.size / 1024**dsu * 10) / 10
 
 					return `<tr><td><a href="./${f}">${f}</a></td>` +
 					`<td>${f.mtime.toLocaleString().replace(',', '')}</td>` +
-					(f.size ? `<td>${Math.trunc(f.size / 1024**dsu * 10) / 10} ${dsc}</td>` : '') +
+					(f.size ? `<td>${size} ${dsc}</td>` : '') +
 					'</tr>'
 				}).join('')
+				const table = LIST_HEADER + up + list
 
-				res.send('text/html; charset=utf-8', `<!DOCTYPE html>${LIST_STYLE}<table>${LIST_HEADER}${up}${list}</table>`)
+				res.send(
+					'text/html; charset=utf-8',
+					`<!DOCTYPE html>${LIST_STYLE}<table>${table}</table>`
+				)
 			},
 			json() { res.send('application/json', JSON.stringify(flist)) },
 			text() { res.send('text/plain', flist.join()) }
@@ -455,41 +504,42 @@ const fileHandler: RequestListener = async (req, res) => { //? File handler
 }
 
 const notFoundHandler: RequestListener = (req, res) => { //? Not Found handler
-	res
-	.cacheControl(MAX_AGE)
-	.status(404).format({
-		html() { res.send('text/html', NOT_FOUND_PAGE) },
-		json() { res.send('application/json', '{"error":"Not Found"}') },
-		text() { res.send('text/plain', 'Not Found') }
-	})
+	res.cacheControl(MAX_AGE)
+		.status(404).format({
+			html() { res.send('text/html', NOT_FOUND_PAGE) },
+			json() { res.send('application/json', '{"error":"Not Found"}') },
+			text() { res.send('text/plain', 'Not Found') }
+		})
 }
 
 const forbiddenHandler: RequestListener = (req, res) => { //? Forbidden handler
-	res
-	.cacheControl(MAX_AGE)
-	.status(403).format({
-		html() { res.send('text/html', FORBIDDEN_PAGE) },
-		json() { res.send('application/json', '{"error":"Forbidden"}') },
-		text() { res.send('text/plain', 'Forbidden') }
-	})
+	res.cacheControl(MAX_AGE)
+		.status(403).format({
+			html() { res.send('text/html', FORBIDDEN_PAGE) },
+			json() { res.send('application/json', '{"error":"Forbidden"}') },
+			text() { res.send('text/plain', 'Forbidden') }
+		})
 }
 
 const errorHandler: RequestListener = (req, res) => { //? Error handler
-	const err = res.locals.err
-	const errMsg = `We got some error here [${req.method} ${decodeURI(req.url!)}]:\n${err.stack}`
+	const err = res.locals.err as Error | StaticError
+	const errMsg = `We got some error here \
+[${req.method} ${decodeURI(req.url!)}]:\n${err.stack}`
 	console.error(errMsg)
 
 	latestLogs.push(...errMsg.split('\n').map(v => v.length))
 
 	movePendingRequests(errMsg.split('\n').length)
 
-	res
-	.cacheControl(MAX_AGE)
-	.status(500).format({
-		html() { res.send('text/html', ERROR_PAGE) },
-		json() { res.send('application/json', '{"error":"Internal Server Error"}') },
-		text() { res.send('text/plain', 'Internal Server Error') }
-	})
+	res.cacheControl(MAX_AGE)
+		.status(500).format({
+			html() { res.send('text/html', ERROR_PAGE) },
+			json() { res.send(
+				'application/json',
+				'{"error":"Internal Server Error"}'
+			) },
+			text() { res.send('text/plain', 'Internal Server Error') }
+		})
 }
 
 const ex = createServer((req, res) => {
@@ -527,7 +577,8 @@ const ex = createServer((req, res) => {
 		return resp
 	}
 	resp.redirect = (location) => resp.writeHead(302, { location }).end()
-	resp.cacheControl = (maxAge) => resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
+	resp.cacheControl = (maxAge) =>
+		resp.setHeader('Cache-Control', `public, max-age=${maxAge}`)
 	resp.etag = (stats) => {
 		const etagValue = etag(stats)
 		resp.setHeader('ETag', etagValue)
@@ -535,8 +586,9 @@ const ex = createServer((req, res) => {
 	}
 	resp.matchEtag = () => {
 		const etagValue = resp.getHeader('Etag')
-		if (etagValue === undefined) throw new Error("'Etag' header must be set before matching")
-		if (resp.req.headers['if-none-match'] === etagValue) return !!resp.writeHead(304).end()
+		assert(etagValue, "'Etag' header must be set before matching")
+		if (resp.req.headers['if-none-match'] === etagValue)
+			return !!resp.writeHead(304).end()
 	}
 
 	resp.setHeader('X-Powered-By', 'urobbyu/serve')
@@ -546,13 +598,15 @@ const ex = createServer((req, res) => {
 let PORT = argv.p
 isPortFree(PORT).then(isFree => {
 	if (!isFree) {
-		console.error(`Port ${PORT} is already in use. Switching to random free port.`)
+		console.error(`Port ${PORT} is already in use. \
+Switching to random free port.`)
 		PORT = 0
 	}
 
 	const server = ex.listen(PORT, () => {
 		const port = (server.address() as SocketAddress).port
-		console.log(`http://localhost:${port} is listening.\nTo stop press CTRL+C...\n`)
+		console.log(`http://localhost:${port} is listening.
+To stop press CTRL+C...\n`)
 		if (OPEN_IN_BROWSER) open(`http://localhost:${port}`)
 
 		process.stdin.setRawMode(true)

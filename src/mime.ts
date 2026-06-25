@@ -15,7 +15,10 @@ Object.entries(mimeDB).forEach(([name, ent]) => {
 	}
 })
 
-export const lookup = db.lookup = (path: string, fallback: string = 'application/octet-stream') => {
+export const lookup = db.lookup = (
+	path: string,
+	fallback: string = 'application/octet-stream'
+) => {
 	const ext = path.replace(/^.*[\.\/\\]/, '').toLowerCase()
 	return db.get(ext) ?? fallback
 }

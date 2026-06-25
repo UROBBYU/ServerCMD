@@ -27,7 +27,12 @@
 		"@types/etag": "^1.8.3",
 		"@types/mime-db": "^1.43.6",
 		"@types/node": "^24.7.2",
-		"@types/yargs": "^17.0.33"
+		"@types/yargs": "^17.0.33",
+		"@typescript-eslint/eslint-plugin": "^8.62.0",
+		"eslint": "^10.5.0",
+		"globals": "^17.7.0",
+		"jiti": "^2.7.0",
+		"typescript-eslint": "^8.62.0"
 	},
 	"files": [
 		"README.md",

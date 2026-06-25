@@ -3,10 +3,14 @@ import * as http from 'node:http'
 import { lookup } from './mime'
 import { join } from 'node:path'
 import { Response } from '.'
+import assert from 'node:assert/strict'
 
 export type NextFunc = (err?: Error | StaticError) => void
 
-export type StaticRequestHandler = (req: http.IncomingMessage, res: Response, next: NextFunc) => void
+export type StaticRequestHandler = (
+	req: http.IncomingMessage,
+	res: Response, next: NextFunc
+) => void
 
 export type StaticOptions = {
 	fallthrough?: boolean
@@ -42,7 +46,10 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 	const DOTFILES = options?.dotfiles ?? 'ignore'
 	const ETAG = options?.etag ?? true
 	const EXTENSIONS = options?.extensions ?? false
-	if (EXTENSIONS && EXTENSIONS.some(v => /\/|\\/.test(v))) throw new Error('Extension path traversal is not allowed')
+	assert(
+		!EXTENSIONS || !EXTENSIONS.some(v => /\/|\\/.test(v)),
+		'Extension path traversal is not allowed'
+	)
 	const INDEX = options?.index ?? 'index.html'
 	const MAX_AGE = options?.maxAge ?? 0
 	const REDIRECT = options?.redirect ?? true
@@ -52,12 +59,20 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 		try {
 			let path = `.${req.url}`
 
-			const isFileFound = (path: string) => fs.existsSync(join(root, path))
-			const isDir = (path: string) => fs.statSync(join(root, path)).isDirectory()
+			const isFileFound = (path: string) =>
+				fs.existsSync(join(root, path))
+			const isDir = (path: string) =>
+				fs.statSync(join(root, path)).isDirectory()
 
 			if (path.includes('/.')) {
-				if (DOTFILES == 'deny') throw new StaticError(403, 'denied')
-				if (DOTFILES == 'ignore') throw new StaticError(404, 'not found')
+				assert(
+					DOTFILES !== 'deny',
+					new StaticError(403, 'denied')
+				)
+				assert(
+					DOTFILES !== 'ignore',
+					new StaticError(404, 'not found')
+				)
 			}
 
 			const resp = (path: string): boolean => {
@@ -67,9 +82,8 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 				const stats = fs.statSync(path)
 
-				res
-				.cacheControl(MAX_AGE)
-				.typeLen(`${lookup(path)}; charset=utf-8`, stats.size)
+				res.cacheControl(MAX_AGE)
+					.typeLen(`${lookup(path)}; charset=utf-8`, stats.size)
 				logger(req, res)
 				if (ETAG && res.etag(stats).matchEtag()) return true
 
@@ -97,14 +111,12 @@ export default (root = './', options?: StaticOptions): StaticRequestHandler => {
 
 			throw new StaticError(404, 'not found')
 		} catch (err) {
-			if (err instanceof StaticError) {
-				if (FALLTHROUGH) {
-					res.status(err.code)
-					next()
-				}
-				else next(err)
-			}
-			else throw err
+			assert(err instanceof StaticError, err as Error)
+
+			if (FALLTHROUGH) {
+				res.status(err.code)
+				next()
+			} else next(err)
 		}
 	}
 }
